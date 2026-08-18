@@ -7,14 +7,15 @@
 import * as THREE from 'three';
 
 // ---------- Config ----------
-const MODEL = 'gemini-3.1-flash-lite';
+const MODEL = 'agnes-2.5-flash';
+const API_BASE = 'https://router.bynara.id/v1';
 const BASE_STATS = { trust: 50, love: 10, respect: 50, wisdom: 70, courage: 40 };
 const STAT_ICONS = { trust: '🤝', love: '❤️', respect: '🏅', wisdom: '🧠', courage: '💪' };
 const STAT_COLORS = { trust: '#10b981', love: '#ec4899', respect: '#f59e0b', wisdom: '#8b5cf6', courage: '#ef4444' };
 const MAX_MEMORY_TURNS = 24;
 
 // ---------- Persisted state ----------
-let apiKey = localStorage.getItem('geminiApiKey') || '';
+let apiKey = localStorage.getItem('naraApiKey') || '';
 let canTalk = false;
 let stats = load('cote3dStats', { ...BASE_STATS });
 let memory = load('cote3dConvos', {});            // { npcName: [ {role, parts} ] }
@@ -23,6 +24,8 @@ let storyConvo = load('cote3dStoryConvo', []);
 
 function load(key, def) { try { const v = JSON.parse(localStorage.getItem(key)); return v ?? def; } catch { return def; } }
 function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { console.warn(e); } }
+// Convert stored {role, parts:[{text}]} history to OpenAI chat format ('model' -> 'assistant').
+function toChatMessages(msgs) { return msgs.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.parts?.[0]?.text ?? '' })); }
 
 // runtime (not persisted)
 let activeNPC = null;
@@ -695,13 +698,127 @@ function say(npc, text, ms = 3600) {
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 // ---------- School clock (drives realistic daily routine) ----------
-let clockMin = 8 * 60;                 // start 08:00
-const MIN_PER_SEC = 1.5;               // a full school day in ~10 real minutes
+// One full 24-hour day = DAY_REAL_MIN real minutes.
+const DAY_REAL_MIN = 20;
+const MIN_PER_SEC = 1440 / (DAY_REAL_MIN * 60);
+let clockMin = 8 * 60;                 // start Day 1, 08:00
+let gameDay = load('cote3dDay', 1);
 const clockChip = document.createElement('div');
 clockChip.style.cssText = 'background:rgba(15,17,24,.86);border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:8px 14px;font-size:13px;backdrop-filter:blur(8px);';
 $('topright').appendChild(clockChip);
 function hhmm() { const h = Math.floor(clockMin / 60) % 24, m = Math.floor(clockMin % 60); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; }
-function periodName() { const h = clockMin / 60; return h < 8.6 ? 'Before class' : h < 12 ? 'Lessons' : h < 13.2 ? 'Lunch break' : h < 15.6 ? 'Afternoon lessons' : h < 18 ? 'After school' : 'Evening'; }
+// Fixed 24h rhythm: everyone attends class in the morning, AI-planned tasks in
+// the afternoon/evening, dorms for sleep at night.
+function phaseOf(h) {
+  if (h >= 6 && h < 8) return 'wake';
+  if (h >= 8 && h < 12) return 'class';
+  if (h >= 12 && h < 13.3) return 'lunch';
+  if (h >= 13.3 && h < 15.5) return 'class';
+  if (h >= 15.5 && h < 18.5) return 'free';
+  if (h >= 18.5 && h < 22) return 'evening';
+  return 'sleep';
+}
+const PHASE_LABEL = { wake: 'Morning', class: 'Lessons', lunch: 'Lunch break', free: 'After school', evening: 'Evening', sleep: 'Asleep' };
+// Non-negotiable timetable — nobody may wander during these phases.
+const MANDATORY = { wake: 'class1d', class: 'class1d', lunch: 'cafeteria', sleep: 'dorm' };
+function periodName() { return PHASE_LABEL[phaseOf(clockMin / 60)]; }
+let lastPhaseKey = phaseOf(clockMin / 60);
+function requiredNow(npc) {
+  const phase = phaseOf(clockMin / 60);
+  let dest = MANDATORY[phase];                        // timetable first, always
+  if (!dest) dest = plannedSpot(npc, clockMin / 60) || pick(npc.spots);
+  if (wCur.rain > 0.35 && OUTDOOR.has(dest)) dest = INDOOR_FALLBACK[dest] || 'cafeteria';
+  return dest;
+}
+
+// ---------- AI-planned day (one API call at the start of each in-game day) ----------
+let dayPlan = load('cote3dDayPlan', null);   // { day, plans: {name: [blocks]}, _fb }
+function activeTask(npc, hour) {
+  const blocks = (dayPlan && dayPlan.day === gameDay) ? dayPlan.plans?.[npc.name] : null;
+  if (!Array.isArray(blocks)) return null;
+  return blocks.find(b => hour >= b.s && hour < b.e) || null;
+}
+function plannedSpot(npc, hour) {
+  const b = activeTask(npc, hour);
+  if (!b || !LOC[b.loc]) return null;
+  npc._curTask = b.task || null;
+  if (b.line && npc._taskKey !== b.s) {       // announce the task once, in character
+    npc._taskKey = b.s;
+    if (playerDist(npc) < 26 && !busyUI()) say(npc, b.line, 4200);
+  }
+  return b.loc;
+}
+function fallbackBlocks(n) {                   // used when there's no key / the AI fails
+  const spots = n.spots.filter(s => s !== 'class1d');
+  return [
+    { s: 15.5, e: 17, loc: pick(spots.length ? spots : n.spots), task: 'free time', line: '' },
+    { s: 17, e: 18.5, loc: pick(n.spots), task: 'free time', line: '' },
+    { s: 18.5, e: 22, loc: 'dorm', task: 'at the dorm', line: '' }
+  ];
+}
+// Planned blocks: keep only the AI-planned free-time hours; every other hour is
+// filled with random personality spots so the day is never dead.
+function sanitizePlans(obj) {
+  const FREE_HOURS = [];
+  for (let h = 15.5; h < 22; h += 0.5) FREE_HOURS.push(h);
+  const out = {};
+  for (const n of npcs) {
+    const blocks = Array.isArray(obj?.[n.name]) ? obj[n.name] : [];
+    const clean = [];
+    for (const b of blocks) {
+      const s = Number(b.s), e = Number(b.e);
+      let loc = String(b.loc || '').toLowerCase();
+      if (!LOC[loc]) loc = resolveLoc(loc);
+      if (!isFinite(s) || !isFinite(e) || e <= s || !loc || loc === 'class1d') continue;
+      clean.push({ s: Math.max(15.5, s), e: Math.min(22, e), loc, task: String(b.task || '').slice(0, 60), line: String(b.line || '').slice(0, 90) });
+    }
+    clean.sort((a, b) => a.s - b.s);
+    // fill every unplanned half-hour with a random spot from the person's own list
+    for (const h of FREE_HOURS) {
+      const covered = clean.some(b => h >= b.s && h < b.e);
+      if (!covered) clean.push({ s: h, e: h + 0.5, loc: pick(n.spots), task: 'free time', line: '' });
+    }
+    clean.sort((a, b) => a.s - b.s);
+    out[n.name] = clean.length ? clean : fallbackBlocks(n);
+  }
+  return out;
+}
+const PLAN_SYS_PROMPT = `You are the life director of a school-life simulation set in "Classroom of the Elite" (Class 1-D). MORNING lessons (6:00-12:00 in class1d), LUNCH (12:00-13:30 in cafeteria) and AFTERNOON lessons (13:30-15:30 in class1d) are FIXED and must NOT appear in your plan. You decide ONLY what each person does AFTER SCHOOL (15:30-18:30) and in the EVENING (18:30-21:59). Stay 100% true to their personality, and VARY the spots from day to day: use the library, the gym, the sports field, the store, the café, the courtyard, the dorm — not always the same place.
+Return ONLY valid JSON, exactly this shape:
+{"plans":{"<Name>":[{"s":15.5,"e":17,"loc":"<locKey>","task":"<short activity>","line":"<optional in-character remark>"}, ...]}}
+Rules:
+- locKey must be one of: library, hall, cafeteria, gym, dorm, store, cafe, field, gate, courtyard.
+- Each person gets 2-3 blocks that together cover 15.5 to 22 with no gaps; s and e are decimal hours between 15.5 and 22; the final block ends at 22 with loc "dorm" (everyone sleeps at night).
+- task is 3-6 words describing the activity; line (0-12 words, or "") is something they might say about it, in character.
+Respond with ONLY the JSON object — no fences, no commentary.`;
+async function planDay(day) {
+  const useFallback = () => { const plans = {}; for (const n of npcs) plans[n.name] = fallbackBlocks(n); dayPlan = { day, plans, _fb: true }; save('cote3dDayPlan', dayPlan); };
+  if (!canTalk) { useFallback(); return; }
+  try {
+    const roster = npcs.map(n => `${n.name}: ${n.persona.slice(0, 130)}`).join('\n');
+    const res = await fetch(`${API_BASE}/chat/completions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: PLAN_SYS_PROMPT },
+          { role: 'user', content: `Day ${day}. Plan today's after-school and evening for:\n${roster}` }
+        ],
+        temperature: 0.95,
+        response_format: { type: 'json_object' }
+      })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    if (!res.ok) throw new Error(data.message || `Request failed (${res.status})`);
+    const raw = String(data.choices[0].message.content).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const parsed = JSON.parse(raw);
+    dayPlan = { day, plans: sanitizePlans(parsed.plans || parsed), _fb: false };
+    save('cote3dDayPlan', dayPlan);
+    npcs.forEach(n => { n._taskKey = null; n._curTask = null; });
+    showToast(`📋 Day ${day} — the AI has set everyone's plans.`, 3500);
+  } catch (e) { console.warn('Day plan failed, using fallback:', e); useFallback(); }
+}
 
 // ---------- Social memory (affinity / mood persist across sessions) ----------
 let social = load('cote3dSocial', {});
@@ -819,16 +936,14 @@ function routeTo(npc, dest) {
 }
 const OUTDOOR = new Set(['field', 'courtyard', 'gate']);
 const INDOOR_FALLBACK = { field: 'gym', courtyard: 'cafeteria', gate: 'hall' };
-// Where would this person actually be right now? Timetable first, personality second,
+// Where would this person actually be right now? Fixed 24h rhythm: class in the
+// morning, cafeteria at lunch, AI-planned tasks after school, dorm at night —
 // and nobody loiters outside in the rain.
 function chooseSpot(npc) {
-  let dest = null;
   const hour = clockMin / 60;
-  if (npc.schedule.length && Math.random() < 0.75) {
-    for (const [h, loc] of npc.schedule) if (hour >= h) dest = loc;
-    if (!dest) dest = npc.schedule[npc.schedule.length - 1][1];   // before the first slot → last night's spot
-  }
-  if (!dest) dest = pick(npc.spots);
+  const phase = phaseOf(hour);
+  let dest = MANDATORY[phase];                        // timetable first, always
+  if (!dest) dest = plannedSpot(npc, hour) || pick(npc.spots);
   if (wCur.rain > 0.35 && OUTDOOR.has(dest)) dest = INDOOR_FALLBACK[dest] || 'cafeteria';
   return dest;
 }
@@ -973,6 +1088,7 @@ function maybeGroupChat(npc, dt, elapsed) {
 function maybeApproach(npc, elapsed) {
   if (!canTalk || busyUI() || npc.storyLock || npc.wantsTalk) return false;
   if (npc.state === 'escort' || elapsed < npc.nextApproach) return false;
+  if (MANDATORY[phaseOf(clockMin / 60)]) return false;   // never abandon class / lunch / sleep to socialize
   const d = playerDist(npc);
   if (d > 24 || d < 3) return false;
   const s = soc(npc.name);
@@ -1030,17 +1146,25 @@ function updateNPC(npc, dt, elapsed) {
     if (far) { npc.anim.moving = false; npc.facing = Math.atan2(camera.position.x - p.x, camera.position.z - p.z); }
     else { const wp = npc.path[npc.pathI]; if (stepNPC(npc, wp.x, wp.z, dt, npc.pathI === npc.path.length - 1)) { npc.pathI++; if (npc.pathI >= npc.path.length) { npc.currentSpot = npc.escortDest; npc.escortDest = null; npc.state = 'idle'; npc.nextDecision = elapsed + 20 + Math.random() * 10; showToast(`${npc.name} arrived at the ${LOC[npc.currentSpot].label}.`); } } }
   } else if (npc.state === 'moving') {
-    if (maybeApproach(npc, elapsed)) { /* interrupted their errand to come say hello */ }
+    if (!MANDATORY[phaseOf(clockMin / 60)] && maybeApproach(npc, elapsed)) { /* interrupted their errand to come say hello */ }
     else {
       const wp = npc.path[npc.pathI];
-      if (stepNPC(npc, wp.x, wp.z, dt, npc.pathI === npc.path.length - 1)) { npc.pathI++; if (npc.pathI >= npc.path.length) { npc.currentSpot = npc.dest; npc.state = 'idle'; npc.nextDecision = elapsed + 12 + Math.random() * 12; npc._skips = 0; } }
+      if (stepNPC(npc, wp.x, wp.z, dt, npc.pathI === npc.path.length - 1)) {
+        npc.pathI++;
+        if (npc.pathI >= npc.path.length) {
+          npc.currentSpot = npc.dest; npc.state = 'idle';
+          npc.nextDecision = elapsed + 4 + Math.random() * 6; npc._skips = 0;
+          const must = requiredNow(npc);   // the bell rang while they walked — go where they must
+          if (must !== npc.currentSpot) routeTo(npc, must);
+        }
+      }
     }
   } else { // idle
     npc.anim.moving = false;
     maybeGroupChat(npc, dt, elapsed);
     if (!maybeApproach(npc, elapsed) && !npc.chatWith && !npc.storyLock && elapsed >= npc.nextDecision) {
       const next = chooseSpot(npc);
-      if (next !== npc.currentSpot) routeTo(npc, next); else npc.nextDecision = elapsed + 8 + Math.random() * 8;
+      if (next !== npc.currentSpot) routeTo(npc, next); else npc.nextDecision = elapsed + 6 + Math.random() * 8;
     }
   }
   npc.rig.root.rotation.y += (npc.facing - npc.rig.root.rotation.y) * Math.min(1, dt * 9);
@@ -1255,8 +1379,25 @@ function animate() {
 
   for (const n of npcs) updateNPC(n, dt, elapsed);
   updateWeather(dt, elapsed);
-  clockMin = (clockMin + dt * MIN_PER_SEC * 60) % (24 * 60);
-  clockChip.textContent = `🕗 ${hhmm()} · ${periodName()}`;
+  const prevMin = clockMin;
+  clockMin = (clockMin + dt * MIN_PER_SEC) % (24 * 60);
+  if (clockMin < prevMin) { gameDay++; save('cote3dDay', gameDay); planDay(gameDay); }   // a new in-game day begins
+  const ph = phaseOf(clockMin / 60);
+  if (ph !== lastPhaseKey) {   // timetable period changed — everyone re-evaluates at once and heads where they must be
+    lastPhaseKey = ph;
+    const el = clock.elapsedTime;
+    for (const n of npcs) {
+      n.chatWith = null;                           // the bell ends all idle chatter
+      if (n.storyLock || n.state === 'approach' || n.state === 'escort') { n.nextDecision = el; continue; }
+      const dest = requiredNow(n);
+      n.nextDecision = el + 4 + Math.random() * 8;
+      if (n.state === 'moving' && n.dest === dest) continue;   // already heading there
+      n.state = 'idle';                                            // cancel any stale errand
+      routeTo(n, dest);                                            // walk to the new obligation now
+    }
+    showToast(`🕗 ${PHASE_LABEL[ph]}`, 2600);
+  }
+  clockChip.textContent = `🕗 ${hhmm()} · Day ${gameDay} · ${periodName()}`;
 
   updateProximity();
   updateSceneLabel();
@@ -1282,12 +1423,13 @@ renderStats();
 
 // ---------- Conversation (with memory) ----------
 function npcSystemPrompt(npc) {
+  const task = activeTask(npc, clockMin / 60);
   return `You are role-playing a single character in the world of "Classroom of the Elite" (Volume 1, first days of school). The human player is Ayanokouji Kiyotaka, an outwardly plain, quiet boy. Stay 100% in character and NEVER speak or act for Ayanokouji.
 
 CHARACTER: ${npc.name}
 ${npc.persona}
 
-RIGHT NOW: it is ${hhmm()} (${periodName()}), you are at the ${LOC[npc.currentSpot]?.label || 'campus'}, the weather is ${wTarget.name.toLowerCase()}, and your current mood is ${soc(npc.name).mood}. You have spoken with him ${soc(npc.name).talks} time(s) before.
+RIGHT NOW: it is ${hhmm()} on Day ${gameDay} (${periodName()}), you are at the ${LOC[npc.currentSpot]?.label || 'campus'}${task?.task ? `, and right now you are ${task.task}` : ''}. The weather is ${wTarget.name.toLowerCase()}, and your current mood is ${soc(npc.name).mood}. You have spoken with him ${soc(npc.name).talks} time(s) before.
 
 RULES:
 - Reply SHORT and natural, like real spoken dialogue (1-4 sentences). No narration of the player's thoughts/actions.
@@ -1318,7 +1460,7 @@ function openDialogue(npc, npcInitiated = false) {
   }
   dialogue.style.display = 'flex';
   beginTalkCam(npc);
-  if (!canTalk) { addLine('sys', '', 'Talking needs a Gemini API key — reload and start with a key.'); return; }
+  if (!canTalk) { addLine('sys', '', 'Talking needs an API key — reload and start with a key.'); return; }
   if (npcInitiated) {
     addLine('sys', '', `— ${npc.name} came over to talk to you —`);
     sendToNPC(`[YOU walked over to Ayanokouji and started this conversation yourself, because you wanted to speak with him. Open with what you came to say, in character.${s.talks > 1 ? ' You have talked before.' : ''}]`, true);
@@ -1342,14 +1484,15 @@ async function sendToNPC(playerText, opening = false) {
   renderChoices([]); dlgThinking.style.display = 'block'; dlgInput.disabled = true;
   const npc = activeNPC;
   try {
-    const contents = convo.slice(-MAX_MEMORY_TURNS).map(m => ({ role: m.role, parts: m.parts }));
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: npcSystemPrompt(npc) }] }, contents, generationConfig: { temperature: 0.85, responseMimeType: 'application/json' } })
+    const contents = toChatMessages(convo.slice(-MAX_MEMORY_TURNS));
+    const res = await fetch(`${API_BASE}/chat/completions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: MODEL, messages: [{ role: 'system', content: npcSystemPrompt(npc) }, ...contents], temperature: 0.85, response_format: { type: 'json_object' } })
     });
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    const raw = data.candidates[0].content.parts[0].text;
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    if (!res.ok) throw new Error(data.message || `Request failed (${res.status})`);
+    const raw = data.choices[0].message.content;
     convo.push({ role: 'model', parts: [{ text: raw }] });
     memory[npc.name] = convo; save('cote3dConvos', memory);
     const parsed = JSON.parse(raw);
@@ -1442,16 +1585,18 @@ async function narrateScene(force) {
   story.narrated[sc.id] = true; save('cote3dStory', story);
   storyEl.style.display = 'flex'; storySpeaker.textContent = 'Narrator'; storyText.textContent = '';
   if (camMode === 'free' && document.pointerLockElement) document.exitPointerLock();
-  if (!canTalk) { storySpeaker.textContent = sc.title; storyText.textContent = sc.objective + '  (Add a Gemini API key for full narration.)'; return; }
+  if (!canTalk) { storySpeaker.textContent = sc.title; storyText.textContent = sc.objective + '  (Add an API key for full narration.)'; return; }
   storyThinking.style.display = 'block';
   try {
     storyConvo.push({ role: 'user', parts: [{ text: sc.prompt }] });
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: storySysPrompt() }] }, contents: storyConvo.slice(-16), generationConfig: { temperature: 0.85, responseMimeType: 'application/json' } })
+    const res = await fetch(`${API_BASE}/chat/completions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: MODEL, messages: [{ role: 'system', content: storySysPrompt() }, ...toChatMessages(storyConvo.slice(-16))], temperature: 0.85, response_format: { type: 'json_object' } })
     });
-    const data = await res.json(); if (data.error) throw new Error(data.error.message);
-    const raw = data.candidates[0].content.parts[0].text; storyConvo.push({ role: 'model', parts: [{ text: raw }] });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    if (!res.ok) throw new Error(data.message || `Request failed (${res.status})`);
+    const raw = data.choices[0].message.content; storyConvo.push({ role: 'model', parts: [{ text: raw }] });
     save('cote3dStoryConvo', storyConvo);
     const p = JSON.parse(raw); storySpeaker.textContent = p.speaker || 'Narrator'; storyText.textContent = p.text || '';
     speakAs(VOICE_STYLE[p.speaker] ? p.speaker : 'Narrator', p.text, 2);
@@ -1475,8 +1620,9 @@ $('next-scene-btn').onclick = () => { storyEl.style.display = 'flex'; nextScene(
 // ---------- Start / reset ----------
 function begin(mode) {
   const k = keyInput.value.trim();
-  if (mode !== 'explore') { if (k) { apiKey = k; localStorage.setItem('geminiApiKey', apiKey); } canTalk = !!apiKey; }
+  if (mode !== 'explore') { if (k) { apiKey = k; localStorage.setItem('naraApiKey', apiKey); } canTalk = !!apiKey; }
   else canTalk = false;
+  if (canTalk && dayPlan && dayPlan._fb) planDay(gameDay);   // upgrade the fallback plan with a real AI one
   overlay.style.display = 'none';
   if (cv.requestPointerLock) { try { cv.requestPointerLock(); } catch {} }
   if (mode === 'story') { camera.position.set(0, EYE, 100); yaw = Math.PI; enterScene(story.i >= 0 ? story.i : 0); }
@@ -1487,8 +1633,9 @@ $('enter-btn').onclick = () => begin('free');
 $('explore-btn').onclick = () => begin('explore');
 $('reset-btn').onclick = () => {
   if (!confirm('Erase all progress — conversations, story, and stats?')) return;
-  ['cote3dStats', 'cote3dConvos', 'cote3dStory', 'cote3dStoryConvo', 'cote3dSocial'].forEach(k => localStorage.removeItem(k));
+  ['cote3dStats', 'cote3dConvos', 'cote3dStory', 'cote3dStoryConvo', 'cote3dSocial', 'cote3dDay', 'cote3dDayPlan'].forEach(k => localStorage.removeItem(k));
   location.reload();
 };
 updateObjective();
+if (!dayPlan || dayPlan.day !== gameDay) planDay(gameDay);   // plan today at boot (AI if a key exists, else fallback)
 animate();

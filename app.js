@@ -6,12 +6,13 @@
 // always consistent and storage stays small.
 // =====================================================
 
-const MODEL = 'gemini-3.1-flash-lite';
+const MODEL = 'agnes-2.5-flash';
+const API_BASE = 'https://router.bynara.id/v1';
 const STATE_KEY = 'coteState_v2';
 const BASE_STATS = { trust: 50, love: 10, respect: 50, wisdom: 70, courage: 40 };
 const STAT_ICONS = { trust: '🤝', love: '❤️', respect: '🏅', wisdom: '🧠', courage: '💪' };
 
-let apiKey = localStorage.getItem('geminiApiKey') || '';
+let apiKey = localStorage.getItem('naraApiKey') || '';
 
 // state.log entries:
 //  { role: 'player', text, hidden? }                                — what the player said/did
@@ -158,11 +159,11 @@ Respond ONLY with a valid JSON object. No markdown fences, no commentary.
 // ---------------- API ----------------
 function buildApiHistory() {
     return state.log.map(entry => entry.role === 'player'
-        ? { role: 'user', parts: [{ text: entry.text }] }
-        : { role: 'model', parts: [{ text: entry.raw }] });
+        ? { role: 'user', content: entry.text }
+        : { role: 'assistant', content: entry.raw });
 }
 
-async function callGeminiAPI(promptText, { hidden = false, label = null } = {}) {
+async function callChatAPI(promptText, { hidden = false, label = null } = {}) {
     if (busy) return;
     setBusy(true);
 
@@ -172,26 +173,31 @@ async function callGeminiAPI(promptText, { hidden = false, label = null } = {}) 
     renderLog();
 
     try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`;
+        const url = `${API_BASE}/chat/completions`;
         const payload = {
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents: buildApiHistory(),
-            generationConfig: {
-                temperature: 0.8,
-                responseMimeType: 'application/json'
-            }
+            model: MODEL,
+            messages: [
+                { role: 'system', content: SYSTEM_PROMPT },
+                ...buildApiHistory()
+            ],
+            temperature: 0.8,
+            response_format: { type: 'json_object' }
         };
 
         const response = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
             body: JSON.stringify(payload)
         });
 
         const data = await response.json();
-        if (data.error) throw new Error(data.error.message);
+        if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+        if (!response.ok) throw new Error(data.message || `Request failed (${response.status})`);
 
-        const raw = data.candidates[0].content.parts[0].text;
+        const raw = data.choices[0].message.content;
         const parsed = JSON.parse(raw);
 
         state.log.push({
@@ -218,7 +224,7 @@ async function callGeminiAPI(promptText, { hidden = false, label = null } = {}) 
         state.log.pop();
         saveState();
         renderLog();
-        showSystemMessage(`⚠️ ${error.message || 'Error connecting to Gemini API. Check your key and connection, then try again.'}`);
+        showSystemMessage(`⚠️ ${error.message || 'Error connecting to the AI API. Check your key and connection, then try again.'}`);
     } finally {
         setBusy(false);
         playerInput.focus();
@@ -369,14 +375,14 @@ function openCheckpointsMenu() {
 // ---------------- Input handling ----------------
 function handlePlayerInput(text) {
     if (!text || busy) return;
-    callGeminiAPI(text);
+    callChatAPI(text);
 }
 
 function startGame() {
     refreshDerivedState();
     renderLog();
     if (state.log.length === 0) {
-        callGeminiAPI(
+        callChatAPI(
             'Begin the story at Scene 1, the bus ride on the first morning of school.',
             { hidden: true }
         );
@@ -396,7 +402,7 @@ function newGame() {
 startBtn.addEventListener('click', () => {
     if (apiKeyInput.value.trim().length > 0) {
         apiKey = apiKeyInput.value.trim();
-        localStorage.setItem('geminiApiKey', apiKey);
+        localStorage.setItem('naraApiKey', apiKey);
         apiModal.classList.add('hidden');
         setBusy(false);
         startGame();
@@ -418,7 +424,7 @@ playerInput.addEventListener('keypress', (e) => {
 });
 
 nextSceneBtn.addEventListener('click', () => {
-    callGeminiAPI('[FORCE NEXT SCENE] Advance the story to the next major scene from the scene guide.', { hidden: true, label: '(skipped to next scene)' });
+    callChatAPI('[FORCE NEXT SCENE] Advance the story to the next major scene from the scene guide.', { hidden: true, label: '(skipped to next scene)' });
 });
 
 newGameBtn.addEventListener('click', newGame);
