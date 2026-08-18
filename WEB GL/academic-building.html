@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Main Academic Building — Exterior &amp; Entrance Plaza (WebGL)</title>
+<style>
+  :root { --panel: rgba(18,20,24,0.72); --line: rgba(255,255,255,0.14); --txt: #e8e6e1; --acc: #ffb84d; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#101216; font-family:"Segoe UI", system-ui, -apple-system, sans-serif; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+  .hud { position:fixed; z-index:10; color:var(--txt); pointer-events:none; user-select:none; }
+  #title { top:16px; left:18px; }
+  #title h1 { font-size:15px; font-weight:600; letter-spacing:0.04em; }
+  #title p  { font-size:11px; opacity:0.65; margin-top:3px; letter-spacing:0.08em; }
+  .chip { display:inline-block; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:2px 8px; font-size:10px; opacity:0.9; margin-top:8px; letter-spacing:0.05em; }
+  #hint { bottom:18px; left:50%; transform:translateX(-50%); font-size:12px; opacity:0.85; background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:7px 16px; letter-spacing:0.03em; white-space:nowrap; }
+  #tools { bottom:18px; right:18px; display:flex; gap:8px; pointer-events:auto; }
+  .btn { font:inherit; font-size:12px; color:var(--txt); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer; letter-spacing:0.03em; transition:background .15s, border-color .15s; }
+  .btn:hover { background:rgba(255,255,255,0.12); }
+  .btn.on { border-color:var(--acc); color:var(--acc); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="hud" id="title">
+  <h1>Main Academic Building · Exterior &amp; Entrance Plaza</h1>
+  <p>TOKYO METROPOLITAN ADVANCED NURTURING HIGH SCHOOL</p>
+  <div class="chip" id="stats"></div>
+</div>
+<div class="hud" id="hint">🖱️&nbsp;Drag to orbit &nbsp;·&nbsp; Scroll to zoom</div>
+<div class="hud" id="tools">
+  <button class="btn" id="btnOrbit">Auto-orbit</button>
+  <button class="btn" id="btnReset">Reset view</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* ============================ renderer / scene / camera ============================ */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap; // crisp mid-day shadows
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const HORIZON = 0xE3F0F9;
+scene.fog = new THREE.Fog(HORIZON, 70, 220);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1200);
+const HOME_POS = new THREE.Vector3(20, 10, 48);
+const HOME_TGT = new THREE.Vector3(0, 6, 8);
+camera.position.copy(HOME_POS);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.05).texture;
+pmrem.dispose();
+
+/* ============================ clear-sky background (gradient dome + clouds) ============================ */
+function buildSky() {
+  const c = document.createElement('canvas');
+  c.width = 16; c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#4E8FD0');
+  g.addColorStop(0.55, '#A8CDEC');
+  g.addColorStop(1, '#E3F0F9');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 16, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(500, 24, 16),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false })
+  );
+  scene.add(sky);
+}
+
+function buildClouds() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(128, 64, 8, 128, 64, 112);
+  grad.addColorStop(0, 'rgba(255,255,255,0.92)');
+  grad.addColorStop(0.6, 'rgba(255,255,255,0.45)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 256, 128);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const spots = [[-40, 30, -20, 3], [10, 34, -40, 2.5], [35, 30, 25, 3.5], [-20, 36, 30, 2.8], [55, 32, -10, 3], [-55, 33, 15, 2.6]];
+  for (const [x, y, z, s] of spots) {
+    const sp = new THREE.Sprite(mat);
+    sp.position.set(x, y, z);
+    sp.scale.set(8 * s, 3.8 * s, 1);
+    scene.add(sp);
+  }
+}
+
+/* ============================ lighting: bright 5600K mid-day sun ============================ */
+const sun = new THREE.DirectionalLight(0xFFF4E3, 3.2);
+sun.position.set(-40, 70, 20);
+sun.target.position.set(0, 0, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -45;  sun.shadow.camera.right = 45;
+sun.shadow.camera.top = 60;    sun.shadow.camera.bottom = -25;
+sun.shadow.camera.near = 5;    sun.shadow.camera.far = 140;
+sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xFFFDF8, 0x8F8A82, 0.85));
+
+/* ============================ PBR materials ============================ */
+const M = {
+  steel:      new THREE.MeshStandardMaterial({ color: 0x3A3D40, roughness: 0.3, metalness: 0.85 }),   // powder-coat frame
+  glass:      new THREE.MeshPhysicalMaterial({ color: 0xA8C2D4, transmission: 0.9, roughness: 0.1, metalness: 0.2, ior: 1.5, thickness: 0.12 }),
+  glassDoor:  new THREE.MeshPhysicalMaterial({ color: 0x7FA0B8, transmission: 0.75, roughness: 0.12, metalness: 0.2, ior: 1.5, thickness: 0.12 }),
+  concrete:   new THREE.MeshStandardMaterial({ color: 0xB0B0B0, roughness: 0.45 }),                   // polished grey stone
+  concreteDark: new THREE.MeshStandardMaterial({ color: 0x9A9A9A, roughness: 0.55 }),
+  shrub:      new THREE.MeshStandardMaterial({ color: 0x4E7A3A, roughness: 0.9 }),
+  roofGrey:   new THREE.MeshStandardMaterial({ color: 0x8B8E93, roughness: 0.7 }),
+};
+
+/* ============================ building hull ============================ */
+const BLD = { L: 60, D: 25, H: 16, stories: 4, storyH: 4, slab: 0.35 };
+const FRONT = BLD.D / 2, BACK = -BLD.D / 2, LEFT = -BLD.L / 2, RIGHT = BLD.L / 2;
+
+function box(w, h, d, mat, x, y, z, opts = {}) {
+  const { cast = true, recv = true } = opts;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  m.castShadow = cast;
+  m.receiveShadow = recv;
+  scene.add(m);
+  return m;
+}
+
+function buildSlabs() {
+  for (let k = 0; k <= 4; k++) box(BLD.L, BLD.slab, BLD.D, M.concreteDark, 0, 4 * k + 0.175, 0);
+}
+
+// floor-to-ceiling glass curtain walls — modular panel instances
+function buildCurtainWalls() {
+  const rows = 4, bays = 12;
+  const bayW = BLD.L / bays, glassH = BLD.storyH - BLD.slab; // 3.65
+  const front = new THREE.InstancedMesh(new THREE.BoxGeometry(bayW, glassH, 0.02), M.glass, rows * bays);
+  const back = new THREE.InstancedMesh(front.geometry, M.glass, rows * bays);
+  const d = new THREE.Object3D();
+  let i = 0;
+  for (let r = 0; r < rows; r++) for (let b = 0; b < bays; b++) {
+    d.position.set(LEFT + bayW * (b + 0.5), 2.175 + 4 * r, FRONT - 0.01);
+    d.updateMatrix();
+    front.setMatrixAt(i, d.matrix);
+    d.position.z = BACK + 0.01;
+    d.updateMatrix();
+    back.setMatrixAt(i, d.matrix);
+    i++;
+  }
+  scene.add(front, back);
+
+  const sideBays = 5, sideW = BLD.D / sideBays;
+  const sides = new THREE.InstancedMesh(new THREE.BoxGeometry(0.02, glassH, sideW), M.glass, rows * sideBays * 2);
+  i = 0;
+  for (let r = 0; r < rows; r++) for (let b = 0; b < sideBays; b++) {
+    for (const sx of [-1, 1]) {
+      d.position.set(sx * (BLD.D / 2 - 0.01), 2.175 + 4 * r, BACK + sideW * (b + 0.5));
+      d.updateMatrix();
+      sides.setMatrixAt(i++, d.matrix);
+    }
+  }
+  scene.add(sides);
+}
+
+// brushed steel structural pillars every 5 m
+function buildPillars() {
+  const mkPillar = (x, z) => {
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.5, BLD.H + 0.35, 0.5), M.steel);
+    p.position.set(x, 8.175, z);
+    p.castShadow = true;
+    scene.add(p);
+  };
+  for (let b = 0; b <= 12; b++) { const x = LEFT + 5 * b; mkPillar(x, FRONT); mkPillar(x, BACK); }
+  for (let b = 0; b <= 5; b++) { const z = BACK + 5 * b; mkPillar(RIGHT, z); mkPillar(LEFT, z); }
+}
+
+// horizontal mullion strips at each slab line
+function buildMullions() {
+  for (const y of [0.35, 4.35, 8.35, 12.35]) {
+    box(BLD.L, 0.12, 0.07, M.steel, 0, y, FRONT - 0.06, { cast: false });
+    box(BLD.L, 0.12, 0.07, M.steel, 0, y, BACK + 0.06, { cast: false });
+    box(0.07, 0.12, BLD.D, M.steel, FRONT - 0.06, y, 0, { cast: false });
+    box(0.07, 0.12, BLD.D, M.steel, BACK + 0.06, y, 0, { cast: false });
+  }
+}
+
+function buildRoof() {
+  box(4, 1.5, 3, M.roofGrey, -8, 16.35 + 0.75, -4, { cast: false });
+  box(3, 1.2, 2.5, M.roofGrey, 6, 16.35 + 0.6, 5, { cast: false });
+  box(2.5, 1, 2, M.roofGrey, 12, 16.35 + 0.5, -6, { cast: false });
+  box(3.5, 2.5, 3.5, M.concreteDark, 0, 16.35 + 1.25, 0, { cast: false }); // elevator penthouse
+}
+
+/* ============================ entrance: canopy, glass doors, stairs, flower beds ============================ */
+function buildEntrance() {
+  // cantilevered canopy over the entrance
+  box(14, 0.4, 4.55, M.concrete, 0, 6.2, 14.77);
+  box(0.45, 6.2, 0.45, M.steel, -4.8, 3.1, 16.55);
+  box(0.45, 6.2, 0.45, M.steel, 4.8, 3.1, 16.55);
+
+  // glass sliding doors at the facade centre
+  for (const dx of [-5.5, -2.75, 0, 2.75, 5.5]) box(0.09, 3.6, 0.09, M.steel, dx, 1.8, 12.62, { cast: false });
+  box(11.1, 0.12, 0.1, M.steel, 0, 3.66, 12.62, { cast: false });
+  for (const dx of [-4.125, -1.375, 1.375, 4.125]) {
+    const g = new THREE.Mesh(new THREE.BoxGeometry(2.6, 3.3, 0.05), M.glassDoor);
+    g.position.set(dx, 1.65, 12.62);
+    scene.add(g);
+  }
+
+  // entrance platform + wide concrete stairs
+  box(12, 0.9, 4, M.concrete, 0, 0.45, 14.5);
+  box(12, 0.3, 0.35, M.concrete, 0, 0.15, 16.85);
+  box(12, 0.3, 0.35, M.concrete, 0, 0.45, 16.5);
+  box(12, 0.3, 0.35, M.concrete, 0, 0.75, 16.15);
+  box(0.3, 0.9, 1.06, M.concrete, -6.15, 0.45, 16.5, { cast: false });
+  box(0.3, 0.9, 1.06, M.concrete, 6.15, 0.45, 16.5, { cast: false });
+
+  // raised concrete flower beds with manicured shrubs
+  for (const [fx, fz] of [[-7.5, 17.6], [7.5, 17.6], [-21, 20], [21, 20]]) {
+    box(2.6, 0.7, 2.6, M.concrete, fx, 0.35, fz, { cast: false });
+    box(2.3, 0.55, 2.3, M.shrub, fx, 0.975, fz, { cast: false });
+  }
+}
+
+/* ============================ emergency stairwell (east elevation) ============================ */
+function buildStairwell() {
+  const SW = { zN: -14.6, zS: -10.2 };
+  for (const [cx, cz] of [[30.5, -14.8], [30.5, -10.2], [33.5, -14.8], [33.5, -10.2]]) {
+    const col = new THREE.Mesh(new THREE.BoxGeometry(0.25, 16.4, 0.25), M.steel);
+    col.position.set(cx, 8.2, cz);
+    col.castShadow = true;
+    scene.add(col);
+  }
+  // landings at each floor + outer railing
+  for (const y of [4.25, 8.25, 12.25, 16.25]) {
+    const plat = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.15, 4.4), M.steel);
+    plat.position.set(32, y, -12.5);
+    plat.castShadow = true;
+    scene.add(plat);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 4.4), M.steel);
+    rail.position.set(33.45, y + 0.95, -12.5);
+    scene.add(rail);
+  }
+  // zig-zag flights: ground → L1 → L2 → L3 → roof
+  const flights = [
+    { y0: 0,    y1: 4.25,  dir: 1 },
+    { y0: 4.25, y1: 8.25,  dir: -1 },
+    { y0: 8.25, y1: 12.25, dir: 1 },
+    { y0: 12.25, y1: 16.25, dir: -1 },
+  ];
+  for (const f of flights) {
+    const z0 = f.dir > 0 ? SW.zN : SW.zS;
+    const z1 = f.dir > 0 ? SW.zS : SW.zN;
+    const dy = f.y1 - f.y0, dz = z1 - z0;
+    const ang = Math.atan2(dy, Math.abs(dz));
+    const len = Math.hypot(dy, dz);
+    const midY = (f.y0 + f.y1) / 2, midZ = (z0 + z1) / 2;
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, len), M.steel);
+    slab.position.set(32, midY, midZ);
+    slab.rotation.x = -Math.sign(f.dir) * ang;
+    scene.add(slab);
+    const steps = 9;
+    for (let k = 0; k < steps; k++) {
+      const st = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.1, 0.5), M.concrete);
+      st.position.set(32, f.y0 + (k + 0.5) * (dy / steps), z0 + (k + 0.5) * (dz / steps));
+      scene.add(st);
+    }
+    for (const rx of [30.7, 33.3]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, len), M.steel);
+      rail.position.set(rx, midY + 0.95, midZ);
+      rail.rotation.x = -Math.sign(f.dir) * ang;
+      scene.add(rail);
+    }
+  }
+}
+
+/* ============================ grounds: granite plaza + lawns ============================ */
+function noiseTexture(base, shades, n, repeat) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = shades[Math.random() * shades.length | 0];
+    ctx.globalAlpha = 0.1 + Math.random() * 0.15;
+    const s = 1 + Math.random() * 3;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, s, s);
+  }
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat, repeat);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function paverTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#B6B6B6';
+  ctx.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 900; i++) {
+    ctx.fillStyle = `rgba(${150 + Math.random() * 60 | 0},${150 + Math.random() * 60 | 0},${150 + Math.random() * 60 | 0},0.15)`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2 + Math.random() * 3, 2 + Math.random() * 3);
+  }
+  ctx.strokeStyle = 'rgba(120,120,120,0.55)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i <= 8; i++) {
+    ctx.beginPath(); ctx.moveTo(i * 32, 0); ctx.lineTo(i * 32, 256); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * 32); ctx.lineTo(256, i * 32); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(32, 16);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function buildGrounds() {
+  const grass = new THREE.Mesh(
+    new THREE.PlaneGeometry(200, 200),
+    new THREE.MeshStandardMaterial({ map: noiseTexture('#6C9A50', ['#5E8A45', '#53793C', '#78A85B', '#6FA254'], 2200, 40), roughness: 1 })
+  );
+  grass.rotation.x = -Math.PI / 2;
+  grass.position.y = -0.02;
+  grass.receiveShadow = true;
+  scene.add(grass);
+
+  const plaza = new THREE.Mesh(
+    new THREE.PlaneGeometry(64, 32.5),
+    new THREE.MeshStandardMaterial({ map: paverTexture(), roughness: 0.45 })
+  );
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.set(0, 0.01, 28.75); // z 12.5 → 45, in front of the entrance
+  plaza.receiveShadow = true;
+  scene.add(plaza);
+}
+
+/* ============================ build everything ============================ */
+buildSky();
+buildGrounds();
+buildSlabs();
+buildCurtainWalls();
+buildPillars();
+buildMullions();
+buildEntrance();
+buildStairwell();
+buildRoof();
+buildClouds();
+
+/* ============================ controls & HUD ============================ */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(HOME_TGT);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 8;
+controls.maxDistance = 120;
+controls.maxPolarAngle = Math.PI / 2 - 0.02;
+controls.enablePan = false;
+controls.autoRotateSpeed = 0.6;
+
+controls.addEventListener('start', () => { renderer.domElement.style.cursor = 'grabbing'; });
+controls.addEventListener('end',   () => { renderer.domElement.style.cursor = 'grab'; });
+
+const btnOrbit = document.getElementById('btnOrbit');
+btnOrbit.addEventListener('click', () => {
+  controls.autoRotate = !controls.autoRotate;
+  btnOrbit.classList.toggle('on', controls.autoRotate);
+});
+document.getElementById('btnReset').addEventListener('click', () => {
+  controls.autoRotate = false;
+  btnOrbit.classList.remove('on');
+  camera.position.copy(HOME_POS);
+  controls.target.copy(HOME_TGT);
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// scene stats
+let tris = 0, meshes = 0;
+scene.traverse(o => {
+  if (o.isMesh || o.isInstancedMesh) {
+    meshes++;
+    const g = o.geometry;
+    if (o.isInstancedMesh) tris += g.index ? g.index.count / 3 * o.count : 0;
+    else if (g.index) tris += g.index.count / 3;
+    else if (g.attributes.position) tris += g.attributes.position.count / 3;
+  }
+});
+document.getElementById('stats').textContent = `${meshes} meshes · ${Math.round(tris).toLocaleString()} tris`;
+
+/* ============================ render loop ============================ */
+const clock = new THREE.Clock();
+let intro = true;
+const introT0 = performance.now();
+const INTRO_FROM = new THREE.Vector3(48, 18, 78);
+const INTRO_TGT0 = new THREE.Vector3(0, 4, 8);
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.elapsedTime;
+
+  if (intro) {
+    const p = Math.min((performance.now() - introT0) / 1600, 1);
+    const e = 1 - Math.pow(1 - p, 3);
+    camera.position.lerpVectors(INTRO_FROM, HOME_POS, e);
+    controls.target.lerpVectors(INTRO_TGT0, HOME_TGT, e);
+    if (p >= 1) intro = false;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central School Cafeteria — Dining Hall (WebGL)</title>
+<style>
+  :root { --panel: rgba(18,20,24,0.72); --line: rgba(255,255,255,0.14); --txt: #e8e6e1; --acc: #ffb84d; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#101216; font-family:"Segoe UI", system-ui, -apple-system, sans-serif; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
+  .hud { position:fixed; z-index:10; color:var(--txt); pointer-events:none; user-select:none; }
+  #title { top:16px; left:18px; }
+  #title h1 { font-size:15px; font-weight:600; letter-spacing:0.04em; }
+  #title p  { font-size:11px; opacity:0.65; margin-top:3px; letter-spacing:0.08em; }
+  .chip { display:inline-block; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:2px 8px; font-size:10px; opacity:0.9; margin-top:8px; letter-spacing:0.05em; }
+  #readout { top:16px; right:18px; text-align:right; font-size:12px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 12px; backdrop-filter:blur(6px); min-width:130px; }
+  #readout .lbl { opacity:0.55; font-size:10px; text-transform:uppercase; letter-spacing:0.14em; }
+  #readout .val { margin-top:4px; font-weight:600; color:var(--acc); }
+  #hint { bottom:18px; left:50%; transform:translateX(-50%); font-size:12px; opacity:0.85; background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:7px 16px; letter-spacing:0.03em; white-space:nowrap; }
+  #tools { bottom:18px; right:18px; display:flex; gap:8px; pointer-events:auto; }
+  .btn { font:inherit; font-size:12px; color:var(--txt); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer; letter-spacing:0.03em; transition:background .15s, border-color .15s; }
+  .btn:hover { background:rgba(255,255,255,0.12); }
+  .btn.on { border-color:var(--acc); color:var(--acc); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="hud" id="title">
+  <h1>Central School Cafeteria · Dining Hall</h1>
+  <p>TOKYO METROPOLITAN ADVANCED NURTURING HIGH SCHOOL</p>
+  <div class="chip" id="stats"></div>
+</div>
+<div class="hud" id="readout"><div class="lbl">Selection</div><div class="val" id="sel">—</div></div>
+<div class="hud" id="hint">🖱️&nbsp;Drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Click to inspect</div>
+<div class="hud" id="tools">
+  <button class="btn" id="btnOrbit">Auto-orbit</button>
+  <button class="btn" id="btnReset">Reset view</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* ============================ renderer / scene / camera ============================ */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xEAE3D5);
+scene.fog = new THREE.Fog(0xEAE3D5, 25, 60);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 120);
+const HOME_POS = new THREE.Vector3(13, 3.5, 8.5);
+const HOME_TGT = new THREE.Vector3(0, 1.3, -3);
+camera.position.copy(HOME_POS);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.05).texture;
+pmrem.dispose();
+
+/* ============================ lighting: bright uniform 5000K ============================ */
+scene.add(new THREE.HemisphereLight(0xFFFBF2, 0xB0A898, 0.7));
+for (const [lx, lz] of [[-9, -4], [9, -4], [-9, 4], [9, 4]]) {
+  const pl = new THREE.PointLight(0xFFF4E6, 90, 26, 2);
+  pl.position.set(lx, 3.4, lz);
+  scene.add(pl);
+}
+const lampGlow = new THREE.PointLight(0xFFD9A0, 25, 12, 2);
+lampGlow.position.set(0, 2.3, -9.3);
+scene.add(lampGlow);
+
+/* ============================ PBR materials ============================ */
+const M = {
+  floor:     new THREE.MeshPhysicalMaterial({ color: 0xE5D3B3, roughness: 0.15, metalness: 0.05, clearcoat: 0.7, clearcoatRoughness: 0.15 }), // beige epoxy
+  wall:      new THREE.MeshStandardMaterial({ color: 0xF2EFE8, roughness: 0.92 }),
+  base:      new THREE.MeshStandardMaterial({ color: 0x8A857C, roughness: 0.8 }),
+  ceiling:   new THREE.MeshStandardMaterial({ color: 0xE8E4DA, roughness: 0.92 }),
+  beam:      new THREE.MeshStandardMaterial({ color: 0xB9B4AA, roughness: 0.6 }),
+  panel:     new THREE.MeshStandardMaterial({ color: 0xFFF6EA, emissive: 0xFFF6EA, emissiveIntensity: 1.3 }),
+  steel:     new THREE.MeshPhysicalMaterial({ color: 0xC6C9CE, roughness: 0.25, metalness: 0.9, clearcoat: 0.3 }),
+  tableTop:  new THREE.MeshStandardMaterial({ color: 0xD6C49A, roughness: 0.5 }),
+  leg:       new THREE.MeshStandardMaterial({ color: 0x4A4E54, roughness: 0.4, metalness: 0.6 }),
+  lampShade: new THREE.MeshStandardMaterial({ color: 0x3A2A18, emissive: 0xFFC98F, emissiveIntensity: 1.8 }),
+  menuFrame: new THREE.MeshStandardMaterial({ color: 0x10141C, roughness: 0.5, metalness: 0.4 }),
+  scanScreen:new THREE.MeshStandardMaterial({ color: 0x0A0C10, emissive: 0x5FE8FF, emissiveIntensity: 1.5 }),
+  scanBeam:  new THREE.MeshStandardMaterial({ color: 0x0A0C10, emissive: 0xFF3B5C, emissiveIntensity: 2.2 }),
+  camHousing:new THREE.MeshPhysicalMaterial({ color: 0x1A1A1A, roughness: 0.1, metalness: 0.5, clearcoat: 1.0, clearcoatRoughness: 0.1 }),
+  camDome:   new THREE.MeshPhysicalMaterial({ color: 0x11141A, roughness: 0.05, metalness: 0.2, transmission: 0.7, ior: 1.5 }),
+  camLed:    new THREE.MeshStandardMaterial({ color: 0x0A0C10, emissive: 0xFF3B30, emissiveIntensity: 2.5 }),
+  doorWood:  new THREE.MeshStandardMaterial({ color: 0xA97C50, roughness: 0.55 }),
+  corrFloor: new THREE.MeshStandardMaterial({ color: 0xC9C4B8, roughness: 0.7 }),
+  corrStrip: new THREE.MeshStandardMaterial({ color: 0x1A1408, emissive: 0xFFF2DC, emissiveIntensity: 1.8 }),
+};
+
+/* ============================ room shell ============================ */
+const ROOM = { w: 30, l: 20, h: 4 };
+const NORTH = -ROOM.l / 2, SOUTH = ROOM.l / 2, WEST = -ROOM.w / 2, EAST = ROOM.w / 2;
+const DOORWAY = { x: 0, w: 1.4, h: 2.4 }; // real opening in the south wall
+
+function box(w, h, d, mat, x, y, z, opts = {}) {
+  const { cast = true, recv = true } = opts;
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  m.castShadow = cast;
+  m.receiveShadow = recv;
+  scene.add(m);
+  return m;
+}
+
+function menuTexture() {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 256;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#0D1524';
+  ctx.fillRect(0, 0, 512, 256);
+  ctx.strokeStyle = '#3FA9D8';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(8, 8, 496, 240);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 40px Arial, sans-serif';
+  ctx.fillText("TODAY'S LUNCH", 256, 42);
+  const items = [['Grilled Fish Set', '¥350'], ['Chicken Katsu', '¥380'], ['Curry Rice', '¥360'], ['Miso Soup', '¥80'], ['Seasonal Salad', '¥150'], ['Pudding', '¥120']];
+  ctx.font = '26px Arial, sans-serif';
+  let y = 92;
+  for (const [name, price] of items) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#F2F5F9';
+    ctx.fillText(name, 52, y);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#FFE9A8';
+    ctx.fillText(price, 460, y);
+    y += 28;
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function glowTexture() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+  g.addColorStop(0, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.6, 'rgba(255,255,255,0.35)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function buildShell() {
+  // polished beige epoxy floor
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.w, ROOM.l), M.floor);
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // walls (south split around the doorway) + baseboards
+  box(ROOM.w, ROOM.h, 0.2, M.wall, 0, ROOM.h / 2, NORTH - 0.1);
+  box(DOORWAY.x - DOORWAY.w / 2 - WEST, ROOM.h, 0.2, M.wall, (WEST + DOORWAY.x - DOORWAY.w / 2) / 2, ROOM.h / 2, SOUTH + 0.1);
+  box(EAST - (DOORWAY.x + DOORWAY.w / 2), ROOM.h, 0.2, M.wall, (DOORWAY.x + DOORWAY.w / 2 + EAST) / 2, ROOM.h / 2, SOUTH + 0.1);
+  box(ROOM.w, ROOM.h - DOORWAY.h, DOORWAY.w, M.wall, DOORWAY.x, DOORWAY.h + (ROOM.h - DOORWAY.h) / 2, SOUTH + 0.1);
+  box(0.2, ROOM.h, ROOM.l, M.wall, EAST + 0.1, ROOM.h / 2, 0);
+  box(0.2, ROOM.h, ROOM.l, M.wall, WEST - 0.1, ROOM.h / 2, 0);
+  for (const [w, x, z] of [[ROOM.w, 0, NORTH + 0.02], [DOORWAY.x - DOORWAY.w / 2 - WEST, (WEST + DOORWAY.x - DOORWAY.w / 2) / 2, SOUTH - 0.02], [EAST - (DOORWAY.x + DOORWAY.w / 2), (DOORWAY.x + DOORWAY.w / 2 + EAST) / 2, SOUTH - 0.02]]) {
+    box(w, 0.12, 0.03, M.base, x, 0.06, z, { cast: false });
+  }
+  box(0.03, 0.12, ROOM.l, M.base, EAST - 0.02, 0.06, 0, { cast: false });
+  box(0.03, 0.12, ROOM.l, M.base, WEST + 0.02, 0.06, 0, { cast: false });
+
+  // ceiling + support beams
+  box(ROOM.w, 0.1, ROOM.l, M.ceiling, 0, ROOM.h + 0.05, 0, { cast: false });
+  for (const bz of [-5, 0, 5]) box(ROOM.w, 0.5, 0.5, M.beam, 0, 3.6, bz, { cast: false });
+
+  // bright 5000K overhead panel lights + soft floor light-pool reflections
+  const poolMat = new THREE.MeshBasicMaterial({ map: glowTexture(), transparent: true, opacity: 0.14, depthWrite: false });
+  for (let i = 0; i < 5; i++) for (let j = 0; j < 4; j++) {
+    const x = WEST + 6 * i + 3, z = NORTH + 5 * j + 2.5;
+    box(4.5, 0.02, 3.5, M.panel, x, ROOM.h - 0.02, z, { cast: false });
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 3.2), poolMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(x, 0.006, z);
+    scene.add(pool);
+  }
+
+  // doorway casing + threshold
+  box(0.1, DOORWAY.h, 0.14, M.leg, DOORWAY.x - DOORWAY.w / 2, DOORWAY.h / 2, SOUTH, { cast: false });
+  box(0.1, DOORWAY.h, 0.14, M.leg, DOORWAY.x + DOORWAY.w / 2, DOORWAY.h / 2, SOUTH, { cast: false });
+  box(DOORWAY.w + 0.2, 0.12, 0.14, M.leg, DOORWAY.x, DOORWAY.h + 0.06, SOUTH, { cast: false });
+  box(DOORWAY.w + 0.24, 0.05, 0.4, M.leg, DOORWAY.x, 0.025, SOUTH + 0.07, { cast: false });
+
+  // lit corridor beyond the door
+  const corrFloor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.w, 3.5), M.corrFloor);
+  corrFloor.rotation.x = -Math.PI / 2;
+  corrFloor.position.set(0, 0.005, SOUTH + 1.75);
+  scene.add(corrFloor);
+  box(0.2, ROOM.h, 3.5, M.wall, EAST + 0.1, ROOM.h / 2, SOUTH + 1.75, { cast: false });
+  box(0.2, ROOM.h, 3.5, M.wall, WEST - 0.1, ROOM.h / 2, SOUTH + 1.75, { cast: false });
+  box(ROOM.w, ROOM.h, 0.2, M.wall, 0, ROOM.h / 2, SOUTH + 3.6, { cast: false });
+  box(ROOM.w, 0.1, 3.5, M.ceiling, 0, ROOM.h + 0.05, SOUTH + 1.75, { cast: false });
+  box(8, 0.05, 0.05, M.corrStrip, 0, ROOM.h - 0.05, SOUTH + 1.75, { cast: false });
+  const corrLight = new THREE.PointLight(0xFFF2DC, 15, 12, 2);
+  corrLight.position.set(0, 3, SOUTH + 1.75);
+  scene.add(corrLight);
+}
+
+/* ============================ open door ============================ */
+const doorsGroup = new THREE.Group(); doorsGroup.name = 'Door'; scene.add(doorsGroup);
+
+function buildDoor() {
+  const g = new THREE.Group();
+  g.position.set(DOORWAY.x - DOORWAY.w / 2, 0, SOUTH); // hinge on the west jamb
+  const pivot = new THREE.Group();
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(DOORWAY.w - 0.2, 2.25, 0.05), M.doorWood);
+  leaf.position.set((DOORWAY.w - 0.2) / 2, 1.125, 0.02);
+  const windowGlass = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.04), M.camDome);
+  windowGlass.position.set((DOORWAY.w - 0.2) / 2, 1.5, 0.025);
+  const pushbar = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, DOORWAY.w - 0.3), M.steel);
+  pushbar.position.set((DOORWAY.w - 0.2) / 2, 1.05, 0.06);
+  const hingeA = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.03), M.steel);
+  hingeA.position.set(0.02, 1.7, 0.02);
+  const hingeB = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.03), M.steel);
+  hingeB.position.set(0.02, 0.5, 0.02);
+  pivot.add(leaf, windowGlass, pushbar, hingeA, hingeB);
+  pivot.rotation.y = Math.PI * 100 / 180; // always open, into the hall
+  g.add(pivot);
+  g.userData.label = 'Cafeteria door (open)';
+  doorsGroup.add(g);
+}
+
+/* ============================ instanced bench tables ============================ */
+const tablesGroup = new THREE.Group(); tablesGroup.name = 'Tables'; scene.add(tablesGroup);
+
+function buildTables() {
+  const cols = [-10, 0, 10], rows = [-5, -1.5, 2, 5.5];
+  const n = cols.length * rows.length;
+  const tops = new THREE.InstancedMesh(new THREE.BoxGeometry(4, 0.05, 0.7), M.tableTop, n);
+  const tLegs = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.72, 0.06), M.leg, n * 4);
+  const benches = new THREE.InstancedMesh(new THREE.BoxGeometry(4, 0.04, 0.35), M.tableTop, n * 2);
+  const bLegs = new THREE.InstancedMesh(new THREE.BoxGeometry(0.05, 0.42, 0.05), M.leg, n * 2 * 2);
+  const d = new THREE.Object3D();
+  let it = 0, il = 0, ib = 0, ibl = 0;
+  for (const x of cols) for (const z of rows) {
+    d.position.set(x, 0.75, z); d.updateMatrix(); tops.setMatrixAt(it++, d.matrix);
+    for (const lx of [-1.9, 1.9]) for (const lz of [-0.3, 0.3]) {
+      d.position.set(x + lx, 0.36, z + lz); d.updateMatrix(); tLegs.setMatrixAt(il++, d.matrix);
+    }
+    for (const bz of [-0.75, 0.75]) {
+      d.position.set(x, 0.45, z + bz); d.updateMatrix(); benches.setMatrixAt(ib++, d.matrix);
+      for (const lx of [-1.9, 1.9]) {
+        d.position.set(x + lx, 0.21, z + bz); d.updateMatrix(); bLegs.setMatrixAt(ibl++, d.matrix);
+      }
+    }
+  }
+  tablesGroup.add(tops, tLegs, benches, bLegs);
+}
+
+/* ============================ food service counter ============================ */
+const counterGroup = new THREE.Group(); counterGroup.name = 'Service counter'; scene.add(counterGroup);
+
+function buildCounter() {
+  const g = new THREE.Group();
+  // stainless tray-slide counter along the north wall
+  const body = new THREE.Mesh(new THREE.BoxGeometry(28, 1.1, 1.2), M.steel);
+  body.position.set(0, 0.55, -9.35);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(28, 0.05, 1.5), M.steel);
+  top.position.set(0, 1.12, -9.35);
+  const trayStack = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 0.35), M.steel);
+  trayStack.position.set(13.2, 1.26, -9.35);
+  g.add(body, top, trayStack);
+  g.userData.label = 'Service counter';
+  counterGroup.add(g);
+
+  // heating lamps with covered trays
+  for (const lx of [-12, -8, -4, 0, 4, 8, 12]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.9), M.steel);
+    arm.position.set(lx, 1.7, -9.75);
+    const shade = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.5), M.lampShade);
+    shade.position.set(lx, 1.6, -9.35);
+    const tray = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.4), M.steel);
+    tray.position.set(lx, 1.2, -9.35);
+    shade.userData.label = 'Heating lamp';
+    counterGroup.add(arm, shade, tray);
+  }
+
+  // digital meal pricing menu boards
+  for (const mx of [-8, 0, 8]) {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.1, 0.06), M.menuFrame);
+    frame.position.set(mx, 2.7, -8.6);
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.0), new THREE.MeshStandardMaterial({ map: menuTexture(), emissive: 0xFFFFFF, emissiveMap: menuTexture(), emissiveIntensity: 1.3, roughness: 0.4 }));
+    screen.position.set(mx, 2.7, -8.57);
+    frame.userData.label = 'Meal pricing menu board';
+    counterGroup.add(frame, screen);
+  }
+
+  // point scanner terminals
+  for (const sx of [-6, 0, 6]) {
+    const term = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.32, 0.2), M.steel);
+    term.position.set(sx, 1.28, -9.5);
+    const scr = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.18, 0.02), M.scanScreen);
+    scr.position.set(sx, 1.32, -9.38);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.02, 0.01), M.scanBeam);
+    beam.position.set(sx, 1.2, -9.38);
+    term.userData.label = 'Point scanner terminal';
+    counterGroup.add(term, scr, beam);
+  }
+}
+
+/* ============================ CCTV cameras on ceiling beams ============================ */
+const camerasGroup = new THREE.Group(); camerasGroup.name = 'Cameras'; scene.add(camerasGroup);
+
+function makeCam(group, x, z) {
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.06, 20), M.camHousing);
+  base.position.y = -0.03;
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.1, 20, 14), M.camDome);
+  dome.position.y = -0.07;
+  const led = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.02, 0.02), M.camLed);
+  led.position.set(0.06, 0.02, 0.06);
+  g.add(base, dome, led);
+  g.userData.label = 'CCTV camera';
+  g.position.set(x, 3.42, z);
+  g.lookAt(x, 1.0, z);
+  group.add(g);
+}
+
+function buildCameras() {
+  for (const bz of [-5, 0, 5]) {
+    for (const x of [-10, -5, 0, 5, 10]) makeCam(camerasGroup, x, bz);
+  }
+}
+
+/* ============================ build the hall ============================ */
+buildShell();
+buildDoor();
+buildTables();
+buildCounter();
+buildCameras();
+
+/* ============================ picking & selection ============================ */
+const pickGroups = [tablesGroup, counterGroup, camerasGroup, doorsGroup];
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const selEl = document.getElementById('sel');
+
+let activeGroup = null, hlMats = [], hlBase = [];
+
+function findLabel(o) {
+  while (o) {
+    if (o.userData && o.userData.label) return o.userData.label;
+    o = o.parent;
+  }
+  return null;
+}
+
+function clearHighlight() {
+  if (activeGroup) {
+    hlMats.forEach((m, i) => {
+      const b = hlBase[i];
+      if (m.emissive && b.e) m.emissive.copy(b.e);
+      m.emissiveIntensity = b.i;
+    });
+    hlMats = []; hlBase = []; activeGroup = null;
+  }
+}
+
+function highlight(group) {
+  clearHighlight();
+  activeGroup = group;
+  hlMats = [];
+  hlBase = [];
+  group.traverse(o => {
+    if (o.isMesh && o.material) {
+      hlMats.push(o.material);
+      hlBase.push({ e: o.material.emissive ? o.material.emissive.clone() : null, i: o.material.emissiveIntensity });
+    }
+  });
+}
+
+renderer.domElement.addEventListener('pointermove', e => {
+  const r = renderer.domElement.getBoundingClientRect();
+  pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(pickGroups, true)[0];
+  renderer.domElement.style.cursor = hit ? 'pointer' : 'grab';
+});
+
+renderer.domElement.addEventListener('click', () => {
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(pickGroups, true);
+  if (!hits.length) { clearHighlight(); selEl.textContent = '—'; return; }
+  let obj = hits[0].object;
+  while (obj && !pickGroups.includes(obj)) obj = obj.parent;
+  if (!obj) return;
+  highlight(obj);
+  selEl.textContent = findLabel(hits[0].object) || obj.name || 'Object';
+});
+
+/* ============================ controls & HUD ============================ */
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(HOME_TGT);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 1;
+controls.maxDistance = 40;
+controls.maxPolarAngle = Math.PI / 2 - 0.02;
+controls.enablePan = false;
+controls.autoRotateSpeed = 0.5;
+
+controls.addEventListener('start', () => { renderer.domElement.style.cursor = 'grabbing'; });
+controls.addEventListener('end',   () => { renderer.domElement.style.cursor = 'grab'; });
+
+const btnOrbit = document.getElementById('btnOrbit');
+btnOrbit.addEventListener('click', () => {
+  controls.autoRotate = !controls.autoRotate;
+  btnOrbit.classList.toggle('on', controls.autoRotate);
+});
+document.getElementById('btnReset').addEventListener('click', () => {
+  controls.autoRotate = false;
+  btnOrbit.classList.remove('on');
+  camera.position.copy(HOME_POS);
+  controls.target.copy(HOME_TGT);
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// scene stats
+let tris = 0, meshes = 0;
+scene.traverse(o => {
+  if (o.isMesh || o.isInstancedMesh) {
+    meshes++;
+    const g = o.geometry;
+    if (o.isInstancedMesh) tris += g.index ? g.index.count / 3 * o.count : 0;
+    else if (g.index) tris += g.index.count / 3;
+    else if (g.attributes.position) tris += g.attributes.position.count / 3;
+  }
+});
+document.getElementById('stats').textContent = `${meshes} meshes · ${Math.round(tris).toLocaleString()} tris`;
+
+/* ============================ render loop ============================ */
+const clock = new THREE.Clock();
+let intro = true;
+const introT0 = performance.now();
+const INTRO_FROM = new THREE.Vector3(24, 8, 16);
+const INTRO_TGT0 = new THREE.Vector3(0, 1, 0);
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.elapsedTime;
+
+  if (intro) {
+    const p = Math.min((performance.now() - introT0) / 1600, 1);
+    const e = 1 - Math.pow(1 - p, 3);
+    camera.position.lerpVectors(INTRO_FROM, HOME_POS, e);
+    controls.target.lerpVectors(INTRO_TGT0, HOME_TGT, e);
+    if (p >= 1) intro = false;
+  }
+
+  if (activeGroup) {
+    const p = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(t * 3.5));
+    hlMats.forEach(m => {
+      if (m.emissive) m.emissive.setHex(0xFFB84D);
+      m.emissiveIntensity = p;
+    });
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
