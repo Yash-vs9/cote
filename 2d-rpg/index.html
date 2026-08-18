@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classroom of the Elite: AI Decision RPG</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- API Key Modal -->
+    <div id="api-modal" class="modal-overlay">
+        <div class="modal-content glass-panel">
+            <h2>Welcome to Tokyo Metropolitan Advanced Nurturing High School</h2>
+            <p>To power the dynamic AI Game Master, please enter your API key for router.bynara.id.</p>
+            <p style="font-size: 0.9em; color: var(--text-secondary);">Your key is stored locally in your browser and never sent anywhere else.</p>
+            <input type="password" id="api-key-input" placeholder="Enter API Key..." />
+            <button id="start-game-btn" class="primary-btn">Start Game</button>
+        </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div id="loading-overlay" class="modal-overlay hidden">
+        <div class="spinner"></div>
+        <p>AI is thinking...</p>
+    </div>
+
+    <!-- Checkpoints Modal -->
+    <div id="checkpoints-modal" class="modal-overlay hidden">
+        <div class="modal-content glass-panel" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>💾 Checkpoints / Time Travel</h2>
+                <button id="close-checkpoints-btn" class="secondary-btn" style="padding: 6px 12px;">✕</button>
+            </div>
+            <p style="color: var(--text-secondary); text-align: left; margin-top: 10px;">Every message is a checkpoint. Select one to rewind time and explore a different choice.</p>
+            <div id="checkpoints-list" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
+                <!-- Checkpoints injected here by JS -->
+            </div>
+        </div>
+    </div>
+
+    <div id="game-container">
+        <!-- Header / Stats Dashboard -->
+        <header id="stats-dashboard">
+            <div class="stat glass-panel">
+                <span class="icon">🤝</span>
+                <div class="stat-info">
+                    <span class="label">Trust <span class="stat-num" id="trust-num">50</span></span>
+                    <div class="bar-bg"><div class="bar-fill" id="trust-bar" style="width: 50%;"></div></div>
+                </div>
+            </div>
+            <div class="stat glass-panel">
+                <span class="icon">❤️</span>
+                <div class="stat-info">
+                    <span class="label">Love <span class="stat-num" id="love-num">10</span></span>
+                    <div class="bar-bg"><div class="bar-fill" id="love-bar" style="width: 10%;"></div></div>
+                </div>
+            </div>
+            <div class="stat glass-panel">
+                <span class="icon">🏅</span>
+                <div class="stat-info">
+                    <span class="label">Respect <span class="stat-num" id="respect-num">50</span></span>
+                    <div class="bar-bg"><div class="bar-fill" id="respect-bar" style="width: 50%;"></div></div>
+                </div>
+            </div>
+            <div class="stat glass-panel">
+                <span class="icon">🧠</span>
+                <div class="stat-info">
+                    <span class="label">Wisdom <span class="stat-num" id="wisdom-num">70</span></span>
+                    <div class="bar-bg"><div class="bar-fill" id="wisdom-bar" style="width: 70%;"></div></div>
+                </div>
+            </div>
+            <div class="stat glass-panel">
+                <span class="icon">💪</span>
+                <div class="stat-info">
+                    <span class="label">Courage <span class="stat-num" id="courage-num">40</span></span>
+                    <div class="bar-bg"><div class="bar-fill" id="courage-bar" style="width: 40%;"></div></div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <span id="scene-chip" class="scene-chip hidden"></span>
+                <button id="open-checkpoints-btn" class="secondary-btn">💾 Checkpoints</button>
+                <button id="new-game-btn" class="secondary-btn" title="Erase all progress and restart Chapter 1">🔄 New Game</button>
+            </div>
+        </header>
+
+        <!-- Main Narrative Area (scrolling message log) -->
+        <main id="story-area" class="glass-panel">
+            <div id="message-log">
+                <div class="msg msg-system">
+                    <div class="msg-text">Please enter your API Key to begin the story.</div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Player Input Area -->
+        <footer id="input-area" class="glass-panel">
+            <div id="suggested-choices" class="hidden">
+                <!-- AI suggested choices will appear here as buttons -->
+            </div>
+            <div class="input-row">
+                <input type="text" id="player-input" placeholder="What do you want to do or say?" disabled />
+                <button id="send-btn" class="primary-btn" disabled>Send</button>
+                <button id="next-scene-btn" class="secondary-btn" title="Force the story to advance to the next major scene" disabled>Next Scene</button>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Background overlays for mood changes -->
+    <div id="mood-overlay"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

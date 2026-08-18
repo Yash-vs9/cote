@@ -1,114 +1,474 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Classroom of the Elite: AI Decision RPG</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Classroom of the Elite — ANHS Portal & Launcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #060911;
+      --panel-bg: rgba(14, 20, 32, 0.75);
+      --panel-border: rgba(59, 130, 246, 0.22);
+      --panel-hover: rgba(59, 130, 246, 0.45);
+      --accent-blue: #38bdf8;
+      --accent-gold: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-purple: #8b5cf6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: radial-gradient(circle at 50% 15%, #0f172a 0%, var(--bg-dark) 85%);
+      color: var(--text-main);
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Ambient animated background grid */
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(to right, rgba(56, 189, 248, 0.04) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(56, 189, 248, 0.04) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+      position: relative;
+      z-index: 1;
+      flex: 1;
+    }
+
+    /* Header */
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+      position: relative;
+    }
+    .school-badge {
+      display: inline-block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      padding: 6px 16px;
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 999px;
+      color: var(--accent-blue);
+      margin-bottom: 16px;
+      backdrop-filter: blur(10px);
+    }
+    h1 {
+      font-family: 'Cinzel', serif;
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800;
+      letter-spacing: 1px;
+      background: linear-gradient(135deg, #ffffff 40%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 12px;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: clamp(0.95rem, 2vw, 1.1rem);
+      max-width: 680px;
+      margin: 0 auto 24px;
+      line-height: 1.6;
+    }
+
+    /* API Key Banner */
+    .api-card {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 20px 24px;
+      max-width: 720px;
+      margin: 0 auto 40px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    .api-card label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-blue);
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+    }
+    .api-input-wrap {
+      flex: 1;
+      min-width: 260px;
+      position: relative;
+    }
+    .api-card input {
+      width: 100%;
+      background: rgba(8, 12, 20, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      padding: 10px 16px;
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .api-card input:focus {
+      border-color: var(--accent-blue);
+    }
+    .api-card button {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 20px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .api-card button:hover {
+      background: linear-gradient(135deg, #3b82f6, #2563eb);
+      transform: translateY(-1px);
+    }
+    .key-saved-hint {
+      font-size: 12px;
+      color: #10b981;
+      display: none;
+    }
+
+    /* Section Title */
+    .section-title {
+      font-family: 'Cinzel', serif;
+      font-size: 1.4rem;
+      letter-spacing: 0.5px;
+      color: #e2e8f0;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(to right, rgba(56, 189, 248, 0.3), transparent);
+    }
+
+    /* Launcher Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+      margin-bottom: 48px;
+    }
+
+    .card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      padding: 28px;
+      backdrop-filter: blur(20px);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(to right, transparent, var(--accent-blue), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+      border-color: var(--panel-hover);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(56, 189, 248, 0.15);
+    }
+    .card:hover::before {
+      opacity: 1;
+    }
+
+    .card-badge {
+      align-self: flex-start;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .badge-primary { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); }
+    .badge-gold { background: rgba(245, 158, 11, 0.15); color: var(--accent-gold); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-purple { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); border: 1px solid rgba(139, 92, 246, 0.3); }
+
+    .card-icon {
+      font-size: 2.2rem;
+      margin-bottom: 12px;
+    }
+    .card h3 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+      line-height: 1.6;
+      margin-bottom: 20px;
+      flex: 1;
+    }
+    .card-features {
+      list-style: none;
+      margin-bottom: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12.5px;
+      color: #cbd5e1;
+    }
+    .card-features li::before {
+      content: '✦ ';
+      color: var(--accent-blue);
+    }
+
+    .launch-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 14px;
+      padding: 12px 20px;
+      border-radius: 12px;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0ea5e9, #2563eb);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(14, 165, 233, 0.35);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 6px 24px rgba(14, 165, 233, 0.55);
+      filter: brightness(1.1);
+    }
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #f1f5f9;
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Blueprints Showcase Section */
+    .blueprints-container {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      padding: 28px;
+      backdrop-filter: blur(20px);
+    }
+    .bp-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .bp-btn {
+      background: rgba(8, 14, 26, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 12px 14px;
+      text-decoration: none;
+      color: #e2e8f0;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .bp-btn:hover {
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.4);
+      color: var(--accent-blue);
+      transform: translateX(3px);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 24px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: rgba(4, 6, 10, 0.8);
+      backdrop-filter: blur(10px);
+    }
+  </style>
 </head>
 <body>
-    <!-- API Key Modal -->
-    <div id="api-modal" class="modal-overlay">
-        <div class="modal-content glass-panel">
-            <h2>Welcome to Tokyo Metropolitan Advanced Nurturing High School</h2>
-            <p>To power the dynamic AI Game Master, please enter your API key for router.bynara.id.</p>
-            <p style="font-size: 0.9em; color: var(--text-secondary);">Your key is stored locally in your browser and never sent anywhere else.</p>
-            <input type="password" id="api-key-input" placeholder="Enter API Key..." />
-            <button id="start-game-btn" class="primary-btn">Start Game</button>
+  <div class="bg-grid"></div>
+
+  <div class="container">
+    <header>
+      <div class="school-badge">Advanced Nurturing High School</div>
+      <h1>Classroom of the Elite</h1>
+      <p class="subtitle">An interactive 3D WebGL school-life simulation, AI decision RPG, and high-fidelity architectural campus experience.</p>
+    </header>
+
+    <!-- Global API Key Setup -->
+    <div class="api-card">
+      <label for="global-api-key">
+        <span>🔑 AI Game Master & Neural Voice Key (router.bynara.id)</span>
+        <span id="key-saved-status" class="key-saved-hint">✓ Saved to LocalStorage</span>
+      </label>
+      <div class="api-input-wrap">
+        <input type="password" id="global-api-key" placeholder="Enter sk-nry-... API key" autocomplete="off" />
+      </div>
+      <button id="save-key-btn">Save Key</button>
+    </div>
+
+    <!-- Main Game Experiences -->
+    <div class="section-title">Playable Experiences</div>
+    <div class="grid">
+      
+      <!-- Flagship 3D Campus Game -->
+      <div class="card" style="border-color: rgba(14, 165, 233, 0.4);">
+        <div>
+          <span class="card-badge badge-primary">⭐ Flagship 3D Game</span>
+          <div class="card-icon">🎮</div>
+          <h3>3D Campus RPG</h3>
+          <p>Full first-person 3D simulation with 15 high-fidelity sectors, intelligent classmates, dynamic routines, and Chapter 1 story mode.</p>
+          <ul class="card-features">
+            <li>15 detailed campus sectors & animated water shaders</li>
+            <li>Articulated 3D characters with real-time TTS voice</li>
+            <li>Social memory, affinity, mood & AI Day Planner</li>
+            <li>Dynamic 6-preset weather system (Clear, Rain, Storm, Sunset)</li>
+          </ul>
         </div>
-    </div>
+        <a href="game3d-campus.html" class="launch-btn btn-primary">▶ Play 3D Campus Game</a>
+      </div>
 
-    <!-- Loading Indicator -->
-    <div id="loading-overlay" class="modal-overlay hidden">
-        <div class="spinner"></div>
-        <p>AI is thinking...</p>
-    </div>
-
-    <!-- Checkpoints Modal -->
-    <div id="checkpoints-modal" class="modal-overlay hidden">
-        <div class="modal-content glass-panel" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h2>💾 Checkpoints / Time Travel</h2>
-                <button id="close-checkpoints-btn" class="secondary-btn" style="padding: 6px 12px;">✕</button>
-            </div>
-            <p style="color: var(--text-secondary); text-align: left; margin-top: 10px;">Every message is a checkpoint. Select one to rewind time and explore a different choice.</p>
-            <div id="checkpoints-list" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
-                <!-- Checkpoints injected here by JS -->
-            </div>
+      <!-- 3D Architectural Viewer -->
+      <div class="card">
+        <div>
+          <span class="card-badge badge-gold">🏛️ 3D Campus Viewer</span>
+          <div class="card-icon">🗺️</div>
+          <h3>Campus Architecture Explorer</h3>
+          <p>Free-flying OrbitControls camera view to inspect all 15 building models, classroom dioramas, and campus layout simultaneously.</p>
+          <ul class="card-features">
+            <li>Interactive 360° orbit, pan, and zoom controls</li>
+            <li>Complete campus overview without first-person constraints</li>
+            <li>All materials, lighting, and textures visualized</li>
+          </ul>
         </div>
+        <a href="game.html" class="launch-btn btn-secondary">🔍 Open Campus Viewer</a>
+      </div>
+
+      <!-- 2D AI Decision RPG -->
+      <div class="card">
+        <div>
+          <span class="card-badge badge-purple">📖 Narrative RPG</span>
+          <div class="card-icon">⚖️</div>
+          <h3>2D AI Decision RPG</h3>
+          <p>Interactive story simulation focusing on Ayanokouji's choices, S-System private points, and full checkpoint time travel.</p>
+          <ul class="card-features">
+            <li>Branching AI narrative and decision consequences</li>
+            <li>Trust, Love, Respect, Wisdom & Courage stats</li>
+            <li>Instant checkpoint time-travel rewinds</li>
+          </ul>
+        </div>
+        <a href="2d-rpg/index.html" class="launch-btn btn-secondary">📜 Play 2D Decision RPG</a>
+      </div>
+
     </div>
 
-    <div id="game-container">
-        <!-- Header / Stats Dashboard -->
-        <header id="stats-dashboard">
-            <div class="stat glass-panel">
-                <span class="icon">🤝</span>
-                <div class="stat-info">
-                    <span class="label">Trust <span class="stat-num" id="trust-num">50</span></span>
-                    <div class="bar-bg"><div class="bar-fill" id="trust-bar" style="width: 50%;"></div></div>
-                </div>
-            </div>
-            <div class="stat glass-panel">
-                <span class="icon">❤️</span>
-                <div class="stat-info">
-                    <span class="label">Love <span class="stat-num" id="love-num">10</span></span>
-                    <div class="bar-bg"><div class="bar-fill" id="love-bar" style="width: 10%;"></div></div>
-                </div>
-            </div>
-            <div class="stat glass-panel">
-                <span class="icon">🏅</span>
-                <div class="stat-info">
-                    <span class="label">Respect <span class="stat-num" id="respect-num">50</span></span>
-                    <div class="bar-bg"><div class="bar-fill" id="respect-bar" style="width: 50%;"></div></div>
-                </div>
-            </div>
-            <div class="stat glass-panel">
-                <span class="icon">🧠</span>
-                <div class="stat-info">
-                    <span class="label">Wisdom <span class="stat-num" id="wisdom-num">70</span></span>
-                    <div class="bar-bg"><div class="bar-fill" id="wisdom-bar" style="width: 70%;"></div></div>
-                </div>
-            </div>
-            <div class="stat glass-panel">
-                <span class="icon">💪</span>
-                <div class="stat-info">
-                    <span class="label">Courage <span class="stat-num" id="courage-num">40</span></span>
-                    <div class="bar-bg"><div class="bar-fill" id="courage-bar" style="width: 40%;"></div></div>
-                </div>
-            </div>
-            <div class="header-actions">
-                <span id="scene-chip" class="scene-chip hidden"></span>
-                <button id="open-checkpoints-btn" class="secondary-btn">💾 Checkpoints</button>
-                <button id="new-game-btn" class="secondary-btn" title="Erase all progress and restart Chapter 1">🔄 New Game</button>
-            </div>
-        </header>
-
-        <!-- Main Narrative Area (scrolling message log) -->
-        <main id="story-area" class="glass-panel">
-            <div id="message-log">
-                <div class="msg msg-system">
-                    <div class="msg-text">Please enter your API Key to begin the story.</div>
-                </div>
-            </div>
-        </main>
-
-        <!-- Player Input Area -->
-        <footer id="input-area" class="glass-panel">
-            <div id="suggested-choices" class="hidden">
-                <!-- AI suggested choices will appear here as buttons -->
-            </div>
-            <div class="input-row">
-                <input type="text" id="player-input" placeholder="What do you want to do or say?" disabled />
-                <button id="send-btn" class="primary-btn" disabled>Send</button>
-                <button id="next-scene-btn" class="secondary-btn" title="Force the story to advance to the next major scene" disabled>Next Scene</button>
-            </div>
-        </footer>
+    <!-- Standalone 3D Blueprints Gallery -->
+    <div class="section-title">Sector 3D Blueprints & Dioramas</div>
+    <div class="blueprints-container">
+      <p style="color: var(--text-muted); font-size: 13.5px; margin-bottom: 16px;">
+        Inspect individual high-fidelity WebGL models and interior rooms created for the ANHS campus:
+      </p>
+      <div class="bp-grid">
+        <a href="blueprints/central-park.html" class="bp-btn">⛲ Central Park & Fountain</a>
+        <a href="blueprints/academic-building.html" class="bp-btn">🏢 Academic Building</a>
+        <a href="blueprints/classroom.html" class="bp-btn">🏫 Class 1-D Room</a>
+        <a href="blueprints/memorial-library.html" class="bp-btn">📚 Memorial Library</a>
+        <a href="blueprints/council-room.html" class="bp-btn">🏛️ Student Council Room</a>
+        <a href="blueprints/school-cafeteria.html" class="bp-btn">🍱 School Cafeteria</a>
+        <a href="blueprints/school-gymnasium.html" class="bp-btn">🏀 School Gymnasium</a>
+        <a href="blueprints/aquatic-center.html" class="bp-btn">🏊 Aquatic & Sports Field</a>
+        <a href="blueprints/dormitory-tower.html" class="bp-btn">🏢 Dormitory Tower</a>
+        <a href="blueprints/studio-401.html" class="bp-btn">🛏️ Studio Room 401</a>
+        <a href="blueprints/keyaki-mall.html" class="bp-btn">🛍️ Keyaki Mall</a>
+        <a href="blueprints/keyaki-karaoke.html" class="bp-btn">🎤 Keyaki Karaoke</a>
+        <a href="blueprints/palette-cafe.html" class="bp-btn">☕ Palette Café</a>
+        <a href="blueprints/sivcamera-store.html" class="bp-btn">📷 SIV Convenience & CCTV</a>
+        <a href="blueprints/seaside-boulevard.html" class="bp-btn">🌊 Seaside Promenade</a>
+      </div>
     </div>
 
-    <!-- Background overlays for mood changes -->
-    <div id="mood-overlay"></div>
+  </div>
 
-    <script src="app.js"></script>
+  <footer>
+    Tokyo Metropolitan Advanced Nurturing High School · S-System Simulation Project
+  </footer>
+
+  <script>
+    const keyInput = document.getElementById('global-api-key');
+    const saveBtn = document.getElementById('save-key-btn');
+    const statusHint = document.getElementById('key-saved-status');
+
+    const saved = localStorage.getItem('naraApiKey') || '';
+    if (saved) {
+      keyInput.value = saved;
+      statusHint.style.display = 'inline';
+    }
+
+    function saveKey() {
+      const val = keyInput.value.trim();
+      if (val) {
+        localStorage.setItem('naraApiKey', val);
+        statusHint.style.display = 'inline';
+        statusHint.textContent = '✓ Saved to LocalStorage';
+        setTimeout(() => { statusHint.textContent = '✓ Saved to LocalStorage'; }, 3000);
+      } else {
+        localStorage.removeItem('naraApiKey');
+        statusHint.style.display = 'none';
+      }
+    }
+
+    saveBtn.onclick = saveKey;
+    keyInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') saveKey(); });
+  </script>
 </body>
 </html>
