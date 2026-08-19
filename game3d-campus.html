@@ -40,7 +40,8 @@
 
   #prompt{position:absolute;bottom:92px;left:50%;transform:translateX(-50%);background:var(--panel);
     border:1px solid var(--border);border-radius:10px;padding:10px 18px;font-size:15px;
-    backdrop-filter:blur(10px);display:none;box-shadow:0 10px 30px rgba(0,0,0,0.5);}
+    backdrop-filter:blur(10px);display:none;box-shadow:0 10px 30px rgba(0,0,0,0.5);pointer-events:auto;cursor:pointer;user-select:none;}
+  #prompt:hover{background:rgba(255,255,255,0.12);border-color:var(--accent);}
   #prompt b{color:var(--accent);}
   #help{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);font-size:12px;color:var(--muted);
     background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:6px 14px;backdrop-filter:blur(10px);}
@@ -129,13 +130,13 @@
     </div>
   </div>
   <div id="prompt"></div>
-  <div id="help">WASD / Shift · Mouse look · E talk · V weather · M voice · F3 schedule debug</div>
+  <div id="help">WASD / Shift · Mouse look · E talk · V weather · M voice · C colliders · F3 schedule debug</div>
 </div>
 
 <!-- Developer Schedule Debug Panel -->
 <div id="debug-panel">
   <div class="dbg-head">
-    <span class="dbg-title">⚡ NPC SCHEDULE & BEHAVIOR DEBUG (F3)</span>
+    <span class="dbg-title">⚡ NPC NAVIGATION & SCHEDULE DEBUG (F3)</span>
     <button id="dbg-close" class="btn ghost sm" style="padding:2px 6px;">✕</button>
   </div>
   <div class="dbg-time-btns">
@@ -147,6 +148,10 @@
     <button class="dbg-time-btn" onclick="window.skipToTime(15.5)">📚 15:30 Activities</button>
     <button class="dbg-time-btn" onclick="window.skipToTime(18.5)">🌆 18:30 Evening</button>
     <button class="dbg-time-btn" onclick="window.skipToTime(21.0)">🌙 21:00 Dorms</button>
+  </div>
+  <div style="display:flex;gap:6px;margin-bottom:10px;">
+    <button id="dbg-toggle-paths" class="dbg-time-btn" style="flex:1;background:rgba(59,130,246,0.15);border-color:rgba(59,130,246,0.4);font-weight:600;" onclick="window.toggleDebugPaths?.()">🛣️ Visual Paths: ON</button>
+    <button id="dbg-validate-nav" class="dbg-time-btn" style="flex:1;background:rgba(16,185,129,0.15);border-color:rgba(16,185,129,0.4);font-weight:600;" onclick="window.validateCampusNavigation?.()">🔍 Validate All Routes</button>
   </div>
   <div class="dbg-roster" id="dbg-roster-list">
     <!-- Injected by JS -->
@@ -181,7 +186,10 @@
 <div id="dialogue">
   <div id="dlg-head">
     <div id="dlg-name">Horikita</div>
-    <button class="btn ghost sm" id="dlg-close">✕</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button class="btn ghost sm" id="dlg-key-btn" title="Set or update router.bynara.id API key">🔑 Key</button>
+      <button class="btn ghost sm" id="dlg-close">✕</button>
+    </div>
   </div>
   <div id="dlg-log"></div>
   <div id="dlg-thinking">Thinking…</div>
@@ -228,7 +236,7 @@ const MAX_MEMORY_TURNS = 24;
 
 // Persisted State
 let apiKey = localStorage.getItem('naraApiKey') || '';
-let canTalk = false;
+let canTalk = apiKey.length > 0;
 let stats = load('cote3dStats', { ...BASE_STATS });
 let memory = load('cote3dConvos', {});
 let story = load('cote3dStory', { i: -1, active: false, narrated: {} });
@@ -236,7 +244,19 @@ let storyConvo = load('cote3dStoryConvo', []);
 
 function load(key, def) { try { const v = JSON.parse(localStorage.getItem(key)); return v ?? def; } catch { return def; } }
 function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { console.warn(e); } }
-function toChatMessages(msgs) { return msgs.map(m => ({ role: m.role === 'model' ? 'assistant' : m.role, content: m.parts?.[0]?.text ?? '' })); }
+function toChatMessages(msgs) {
+  return msgs.map(m => {
+    const role = (m.role === 'model' || m.role === 'assistant') ? 'assistant' : 'user';
+    let content = m.parts?.[0]?.text ?? (typeof m.content === 'string' ? m.content : '');
+    if (role === 'assistant') {
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed.text === 'string') content = parsed.text;
+      } catch {}
+    }
+    return { role, content };
+  });
+}
 
 // Runtime
 let activeNPC = null;
@@ -469,14 +489,43 @@ function textSignTexture(text, px, color = '#FFD700', bg = '#0E1420') {
   return tex;
 }
 
-// ---------- Collision System ----------
-const colliders = [];
-function addCollider(x, z, w, d) { colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 }); }
-function collidesAt(x, z, r) {
+// ---------- Collision System & Developer Debug Visualizer ----------
+export const colliders = [];
+export function addCollider(x, z, w, d) {
+  const c = { minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2, x, z, w, d };
+  colliders.push(c);
+  return c;
+}
+export function collidesAt(x, z, r) {
   for (const c of colliders) {
     if (x > c.minX - r && x < c.maxX + r && z > c.minZ - r && z < c.maxZ + r) return true;
   }
   return false;
+}
+
+const debugColliderGroup = new THREE.Group();
+debugColliderGroup.name = 'DebugColliders';
+scene.add(debugColliderGroup);
+let debugCollidersVisible = false;
+
+export function toggleDebugColliders() {
+  debugCollidersVisible = !debugCollidersVisible;
+  debugColliderGroup.clear();
+  if (debugCollidersVisible) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff3366, wireframe: true });
+    const fillMat = new THREE.MeshBasicMaterial({ color: 0xff3366, transparent: true, opacity: 0.18, depthWrite: false });
+    for (const c of colliders) {
+      const geo = new THREE.BoxGeometry(c.w, 3.2, c.d);
+      const wire = new THREE.Mesh(geo, mat);
+      wire.position.set(c.x, 1.6, c.z);
+      const fill = new THREE.Mesh(geo, fillMat);
+      fill.position.set(c.x, 1.6, c.z);
+      debugColliderGroup.add(wire, fill);
+    }
+    showToast('🛡️ Collision Visualizer: ON (Press C to hide)', 3000);
+  } else {
+    showToast('🛡️ Collision Visualizer: OFF', 2000);
+  }
 }
 
 function makeBox(w, h, d, mat, x, y, z, parent = scene, cast = true, recv = true, collide = false) {
@@ -552,24 +601,157 @@ function getCurrentScheduleEvent(min) {
   return SCHOOL_SCHEDULE[0];
 }
 
+// Data-Driven Activity Registry
+export const ACTIVITIES = {
+  ARRIVING_AT_SCHOOL: {
+    label: 'School Arrival',
+    destination: 'courtyard',
+    spotType: null,
+    targetState: 'ARRIVING_AT_SCHOOL',
+    arrivedState: 'IDLE_AT_DESTINATION',
+    animMode: 'idle'
+  },
+  CLASS: {
+    label: 'Homeroom Lecture',
+    destination: 'class1d',
+    spotType: 'desk_seat',
+    targetState: 'GOING_TO_CLASS',
+    arrivedState: 'IN_CLASS',
+    animMode: 'sit_desk'
+  },
+  AFTERNOON_CLASS: {
+    label: 'Afternoon Lecture',
+    destination: 'class1d',
+    spotType: 'desk_seat',
+    targetState: 'GOING_TO_CLASS',
+    arrivedState: 'IN_CLASS',
+    animMode: 'sit_desk'
+  },
+  BREAK: {
+    label: 'Classroom Break',
+    destination: 'class1d',
+    spotType: 'desk_seat',
+    targetState: 'IN_CLASS',
+    arrivedState: 'IN_CLASS',
+    animMode: 'sit_desk'
+  },
+  LUNCH: {
+    label: 'Cafeteria Lunch',
+    destination: 'cafeteria',
+    spotType: 'dining_seat',
+    targetState: 'GOING_TO_LUNCH',
+    arrivedState: 'EATING',
+    animMode: 'sit_eat'
+  },
+  PERSONAL_ACTIVITY: {
+    label: 'Clubs & Leisure',
+    destination: 'library',
+    spotType: 'library_seat',
+    targetState: 'GOING_TO_ACTIVITY',
+    arrivedState: 'IDLE_AT_DESTINATION',
+    animMode: 'idle'
+  },
+  EVENING_LEISURE: {
+    label: 'Evening Leisure',
+    destination: 'mall',
+    spotType: null,
+    targetState: 'GOING_TO_ACTIVITY',
+    arrivedState: 'IDLE_AT_DESTINATION',
+    animMode: 'idle'
+  },
+  DORM_TIME: {
+    label: 'Dormitory Free Time',
+    destination: 'dorm',
+    spotType: null,
+    targetState: 'GOING_TO_DORM',
+    arrivedState: 'IDLE_AT_DESTINATION',
+    animMode: 'idle'
+  },
+  NIGHT_REST: {
+    label: 'Curfew & Rest',
+    destination: 'dorm',
+    spotType: null,
+    targetState: 'GOING_TO_DORM',
+    arrivedState: 'IDLE_AT_DESTINATION',
+    animMode: 'idle'
+  }
+};
+
 // =========================================================================
-// CAMPUS LOCATIONS & INTERACTIVE SEATING REGISTRY
+// CAMPUS BUILDINGS & LOCATIONS REGISTRY
 // =========================================================================
+export const campusBuildings = {
+  academicMain: {
+    label: 'Main Academic Building & Hall',
+    bounds: { minX: -30, maxX: 30, minZ: -69, maxZ: -43 },
+    entrance: [0, -43],
+    interior: [0, -50],
+    node: 'hallA',
+    doorNode: 'hallDoor',
+    interiorNode: 'hallLobby'
+  },
+  classroom1D: {
+    label: 'Class 1-D (West Wing)',
+    bounds: { minX: -68, maxX: -56, minZ: -25, maxZ: -15 },
+    entrance: [-56, -20],
+    interior: [-60, -20],
+    node: 'classA',
+    doorNode: 'classDoor',
+    interiorNode: 'classInterior'
+  },
+  library: {
+    label: 'Memorial Library (West Wing)',
+    bounds: { minX: -76, maxX: -48, minZ: 8, maxZ: 36 },
+    entrance: [-50, 22],
+    interior: [-58, 22],
+    node: 'libA',
+    doorNode: 'libDoor',
+    interiorNode: 'libInterior'
+  },
+  cafeteria: {
+    label: 'School Cafeteria (East Wing)',
+    bounds: { minX: 48, maxX: 76, minZ: -35, maxZ: -5 },
+    entrance: [52, -20],
+    interior: [58, -20],
+    node: 'cafA',
+    doorNode: 'cafDoor',
+    interiorNode: 'cafInterior'
+  },
+  gymnasium: {
+    label: 'Gymnasium (East Wing)',
+    bounds: { minX: 46, maxX: 78, minZ: 6, maxZ: 38 },
+    entrance: [50, 22],
+    interior: [58, 22],
+    node: 'gymA',
+    doorNode: 'gymDoor',
+    interiorNode: 'gymInterior'
+  },
+  dormitory: {
+    label: 'Dormitory Tower & Rooms',
+    bounds: { minX: -48, maxX: -20, minZ: 44, maxZ: 72 },
+    entrance: [-34, 44],
+    interior: [-34, 54],
+    node: 'dormA',
+    doorNode: 'dormDoor',
+    interiorNode: 'dormLobby'
+  }
+};
+
 export const campusLocations = {
   courtyard:   { label: 'Central Courtyard',           c: [0, 8],     node: 'courtA' },
-  class1d:     { label: 'Class 1-D (West Wing)',       c: [-62, -20], node: 'classA' },
-  library:     { label: 'Memorial Library (West Wing)',c: [-62, 22],  node: 'libA' },
-  hall:        { label: 'Main Hall & Academic Center', c: [0, -56],   node: 'hallA' },
-  council:     { label: 'Student Council Room',        c: [26, -56],  node: 'councilA' },
-  cafeteria:   { label: 'Cafeteria (East Wing)',       c: [62, -20],  node: 'cafA' },
-  gym:         { label: 'Gymnasium (East Wing)',       c: [62, 22],   node: 'gymA' },
+  class1d:     { label: 'Class 1-D (West Wing)',       c: [-62, -20], node: 'classA', entrance: [-56, -20], interior: [-60, -20] },
+  library:     { label: 'Memorial Library (West Wing)',c: [-62, 22],  node: 'libA', entrance: [-50, 22], interior: [-58, 22] },
+  hall:        { label: 'Main Hall & Academic Center', c: [0, -56],   node: 'hallA', entrance: [0, -43], interior: [0, -50] },
+  council:     { label: 'Student Council Room',        c: [26, -56],  node: 'councilA', entrance: [20, -56], interior: [26, -56] },
+  cafeteria:   { label: 'Cafeteria (East Wing)',       c: [62, -20],  node: 'cafA', entrance: [52, -20], interior: [58, -20] },
+  gym:         { label: 'Gymnasium (East Wing)',       c: [62, 22],   node: 'gymA', entrance: [50, 22], interior: [58, 22] },
   field:       { label: 'Sports Field & Track',        c: [-62, 60],  node: 'fieldW' },
   aquatic:     { label: 'Olympic Aquatic Center',      c: [-62, 92],  node: 'aquaW' },
-  dorm:        { label: 'Dormitory Tower',             c: [-34, 58],  node: 'dormA' },
-  room401:     { label: 'Room 401 (Ayanokouji Dorm)',  c: [-50, 58],  node: 'roomA' },
-  store:       { label: 'Convenience Store & SIV',     c: [34, 54],   node: 'storeA' },
-  cafe:        { label: 'Palette Café',                c: [54, 54],   node: 'cafeA' },
-  mall:        { label: 'Keyaki Mall & Atrium',        c: [44, 78],   node: 'mallA' },
+  dorm:        { label: 'Dormitory Tower',             c: [-34, 58],  node: 'dormA', entrance: [-34, 44], interior: [-34, 54] },
+  room401:     { label: 'Room 401 (Ayanokouji Dorm)',  c: [-50, 58],  node: 'roomA', entrance: [-50, 52], interior: [-50, 58] },
+  store:       { label: 'Convenience Store & SIV',     c: [34, 54],   node: 'storeA', entrance: [34, 48], interior: [34, 54] },
+  cafe:        { label: 'Palette Café',                c: [54, 54],   node: 'cafeA', entrance: [54, 48], interior: [54, 54] },
+  mall:        { label: 'Keyaki Mall & Atrium',        c: [44, 78],   node: 'mallA', entrance: [44, 66], interior: [44, 74] },
   gate:        { label: 'Front Gate',                  c: [0, 95],    node: 'gateN' },
   seaside:     { label: 'Seaside Coastal Promenade',   c: [0, -145],  node: 'seaN' }
 };
@@ -583,44 +765,36 @@ function registerSpot(id, loc, x, y, z, facing, type = 'seat', extra = {}) {
 }
 
 // 1. Generate Class 1-D Desks (25 Seats in 5x5 layout + Teacher podium)
-// In buildClassroom1D, group at (-62, 0.2, -20) rotated -PI/2.
-// dx = -3.6 + col * 1.8; dz = -1.6 + row * 1.3;
-// In world coordinates: X = -62 + (dz + 0.42), Z = -20 - dx.
 for (let row = 0; row < 5; row++) {
   for (let col = 0; col < 5; col++) {
     const seatNum = row * 5 + col + 1;
     const seatId = `CLASS_1D_SEAT_${String(seatNum).padStart(2, '0')}`;
-    const dx = -3.6 + col * 1.8;
-    const dz = -1.6 + row * 1.3;
-    const wx = -62 + (dz + 0.42);
-    const wz = -20 - dx;
-    registerSpot(seatId, 'class1d', wx, 0, wz, -Math.PI / 2, 'desk_seat', {
-      deskPos: { x: -62 + dz, y: 0.72, z: -20 - dx },
+    const deskX = -65.5 + col * 1.5;
+    const deskZ = -22.4 + row * 1.2;
+    const seatX = deskX;
+    const seatZ = deskZ + 0.45;
+    registerSpot(seatId, 'class1d', seatX, 0, seatZ, Math.PI, 'desk_seat', {
+      deskPos: { x: deskX, y: 0.72, z: deskZ },
       row, col
     });
   }
 }
-registerSpot('CLASS_1D_TEACHER', 'class1d', -65.2, 0, -20, Math.PI / 2, 'podium');
+registerSpot('CLASS_1D_TEACHER', 'class1d', -64.0, 0, -23.2, 0, 'podium');
 
 // 2. Generate Cafeteria Dining Tables (6 tables x 4 seats = 24 seats)
-// Cafeteria at (62, 0, -20) rotated PI/2.
-// tx = -7 + c * 14, tz = -2 + r * 4.5;
 for (let r = 0; r < 3; r++) {
   for (let c = 0; c < 2; c++) {
     const tableNum = r * 2 + c + 1;
-    const tx = -7 + c * 14, tz = -2 + r * 4.5;
-    // 4 seats per table along benches: (tx - 2.5, tz - 1.1), (tx + 2.5, tz - 1.1), (tx - 2.5, tz + 1.1), (tx + 2.5, tz + 1.1)
+    const tx = 56 + c * 12, tz = -26 + r * 6;
     const seatOffsets = [
-      { sx: tx - 2.5, sz: tz - 1.1, f: Math.PI / 2 },
-      { sx: tx + 2.5, sz: tz - 1.1, f: Math.PI / 2 },
-      { sx: tx - 2.5, sz: tz + 1.1, f: -Math.PI / 2 },
-      { sx: tx + 2.5, sz: tz + 1.1, f: -Math.PI / 2 }
+      { sx: tx - 1.2, sz: tz - 0.7, f: 0 },
+      { sx: tx + 1.2, sz: tz - 0.7, f: 0 },
+      { sx: tx - 1.2, sz: tz + 0.7, f: Math.PI },
+      { sx: tx + 1.2, sz: tz + 0.7, f: Math.PI }
     ];
     seatOffsets.forEach((so, si) => {
       const sId = `CAFETERIA_T${tableNum}_S${si + 1}`;
-      // Rotated by PI/2: worldX = 62 - so.sz, worldZ = -20 + so.sx
-      const wx = 62 - so.sz, wz = -20 + so.sx;
-      registerSpot(sId, 'cafeteria', wx, 0, wz, so.f + Math.PI / 2, 'dining_seat', { table: tableNum });
+      registerSpot(sId, 'cafeteria', so.sx, 0, so.sz, so.f, 'dining_seat', { table: tableNum });
     });
   }
 }
@@ -636,11 +810,11 @@ for (let i = 0; i < 12; i++) {
 }
 
 // 4. Generate Gymnasium Stations
-registerSpot('GYM_HOOP_N', 'gym', 62, 0, 8, -Math.PI / 2, 'sport_drill');
-registerSpot('GYM_HOOP_S', 'gym', 62, 0, 36, Math.PI / 2, 'sport_drill');
+registerSpot('GYM_HOOP_N', 'gym', 62, 0, 12, Math.PI, 'sport_drill');
+registerSpot('GYM_HOOP_S', 'gym', 62, 0, 32, 0, 'sport_drill');
 registerSpot('GYM_COURT_MID', 'gym', 62, 0, 22, 0, 'sport_drill');
 for (let b = 1; b <= 4; b++) {
-  registerSpot(`GYM_BENCH_${b}`, 'gym', 51.5 + b * 1.2, 0, 22, -Math.PI / 2, 'bench');
+  registerSpot(`GYM_BENCH_${b}`, 'gym', 53 + b * 1.8, 0, 22, -Math.PI / 2, 'bench');
 }
 
 // 5. Generate Sports Field & Aquatic Stations
@@ -701,48 +875,327 @@ export const ReservationManager = {
 };
 
 // =========================================================================
-// NAVIGATION GRAPH & WAYPOINT PATHFINDING
+// TOPOLOGICAL NAVIGATION GRAPH & MULTI-CORRIDOR NETWORK
 // =========================================================================
 const NAV_NODES = {
+  // Central Courtyard & Plaza Perimeter
   hub: [0, 0], courtA: [0, 8], fountW: [-9, 8], fountE: [9, 8],
-  plazaN: [0, 22], plazaS: [0, -20], hallA: [0, -40], councilA: [20, -40],
-  wMid: [-46, 0], classA: [-46, -20], classDoor: [-56, -20], libA: [-46, 22], libDoor: [-50, 22],
-  eMid: [46, 0], cafA: [46, -20], cafDoor: [52, -20], gymA: [46, 22], gymDoor: [50, 22], eNorth: [46, 44],
-  northA: [0, 44], northB: [0, 70], gateN: [0, 90],
-  dormA: [-34, 44], dormDoor: [-34, 50], roomA: [-50, 44], roomDoor: [-50, 52],
+  courtNW: [-14, 18], courtNE: [14, 18], courtSW: [-14, -8], courtSE: [14, -8],
+  plazaN: [0, 22], plazaS: [0, -20], plazaW: [-24, 0], plazaE: [24, 0],
+
+  // Academic Main Building & South Corridors
+  hallA: [0, -40], hallDoor: [0, -43], hallLobby: [0, -50],
+  hallW: [-24, -40], hallE: [24, -40], councilDoor: [20, -56], councilA: [26, -56],
+  seaN: [0, -125], seaWalk: [0, -140],
+
+  // West Wing: Class 1-D, Library & Approaches
+  wMid: [-46, 0],
+  classA: [-46, -20],
+  classSouthCorr: [-46, -34],
+  classNorthCorr: [-46, -10],
+  classApproach1: [-52, -20],
+  classApproach2: [-53, -18],
+  classApproach3: [-53, -22],
+  classDoor: [-56, -20],
+  classInterior: [-60, -20],
+  classAisleN: [-60, -23],
+  classAisleS: [-60, -17],
+
+  libA: [-46, 22],
+  libNorthCorr: [-46, 34],
+  libSouthCorr: [-46, 10],
+  libApproach1: [-48, 22],
+  libApproach2: [-48, 24],
+  libApproach3: [-48, 20],
+  libDoor: [-50, 22],
+  libInterior: [-58, 22],
+
+  // West Athletics & Dormitory Sector
   fieldW: [-62, 44], aquaW: [-62, 76],
-  storeA: [34, 44], storeDoor: [34, 48], cafeA: [54, 44], cafeDoor: [54, 48], mallA: [44, 66], mallDoor: [44, 72],
-  seaN: [0, -125], seaWalk: [0, -140]
+  westPromenadeN: [-62, 34],
+  fieldEastPath: [-44, 56],
+  dormA: [-34, 44], dormDoor: [-34, 48], dormLobby: [-34, 54], roomDoor: [-50, 52], roomA: [-50, 58],
+
+  // East Wing: Cafeteria, Gymnasium & Approaches
+  eMid: [46, 0],
+  cafA: [46, -20],
+  cafSouthCorr: [46, -34],
+  cafNorthCorr: [46, -10],
+  cafApproach1: [48, -20],
+  cafApproach2: [48, -18],
+  cafApproach3: [48, -22],
+  cafDoor: [52, -20],
+  cafInterior: [58, -20],
+
+  gymA: [46, 22],
+  gymNorthCorr: [46, 34],
+  gymSouthCorr: [46, 10],
+  gymApproach1: [48, 22],
+  gymApproach2: [48, 24],
+  gymApproach3: [48, 20],
+  gymDoor: [50, 22],
+  gymInterior: [58, 22],
+
+  // North Sector: Commercial Arcade & Front Gate
+  northA: [0, 44], northB: [0, 70], gateN: [0, 90],
+  storeA: [34, 44], storeDoor: [34, 48],
+  cafeA: [54, 44], cafeDoor: [54, 48],
+  mallA: [44, 66], mallDoor: [44, 72],
+  eNorth: [46, 44], eastPromenadeN: [62, 54]
 };
 
 const NAV_EDGES = [
+  // 1. Central Courtyard & Plaza Multi-Ring Network
   ['hub', 'fountW'], ['hub', 'fountE'], ['fountW', 'courtA'], ['fountE', 'courtA'],
-  ['hub', 'plazaS'], ['hub', 'plazaN'], ['hub', 'wMid'], ['hub', 'eMid'],
-  ['plazaS', 'hallA'], ['hallA', 'councilA'], ['hallA', 'seaN'], ['seaN', 'seaWalk'],
+  ['hub', 'plazaS'], ['hub', 'plazaN'], ['hub', 'plazaW'], ['hub', 'plazaE'],
+  ['courtA', 'courtNW'], ['courtA', 'courtNE'], ['courtA', 'courtSW'], ['courtA', 'courtSE'],
+  ['courtNW', 'plazaN'], ['courtNE', 'plazaN'], ['courtSW', 'plazaS'], ['courtSE', 'plazaS'],
+  ['courtNW', 'plazaW'], ['courtSW', 'plazaW'], ['courtNE', 'plazaE'], ['courtSE', 'plazaE'],
+  ['plazaW', 'wMid'], ['plazaE', 'eMid'],
+
+  // 2. Academic Main & South Corridors (Multiple East-West Branches)
+  ['plazaS', 'hallA'], ['hallA', 'hallDoor'], ['hallDoor', 'hallLobby'], ['hallLobby', 'councilDoor'], ['councilDoor', 'councilA'],
+  ['hallA', 'hallW'], ['hallA', 'hallE'],
+  ['hallW', 'classSouthCorr'], ['hallE', 'cafSouthCorr'],
+  ['hallA', 'seaN'], ['seaN', 'seaWalk'],
+
+  // 3. West Wing Corridors & Class 1-D Multi-Route Approaches
+  ['wMid', 'classA'], ['wMid', 'classNorthCorr'], ['classNorthCorr', 'classA'],
+  ['classA', 'classSouthCorr'],
+  ['classA', 'classApproach1'], ['classSouthCorr', 'classApproach2'], ['classNorthCorr', 'classApproach3'],
+  ['classApproach1', 'classDoor'], ['classApproach2', 'classDoor'], ['classApproach3', 'classDoor'],
+  ['classDoor', 'classInterior'],
+  ['classInterior', 'classAisleN'], ['classInterior', 'classAisleS'],
+
+  // 4. West Wing: Library Multi-Route Approaches
+  ['wMid', 'libA'], ['wMid', 'libSouthCorr'], ['libSouthCorr', 'libA'],
+  ['libA', 'libNorthCorr'],
+  ['libA', 'libApproach1'], ['libNorthCorr', 'libApproach2'], ['libSouthCorr', 'libApproach3'],
+  ['libApproach1', 'libDoor'], ['libApproach2', 'libDoor'], ['libApproach3', 'libDoor'],
+  ['libDoor', 'libInterior'],
+
+  // 5. West Wing & Athletics Connections
+  ['dormA', 'fieldW'], ['fieldW', 'aquaW'], ['dormA', 'fieldEastPath'], ['fieldEastPath', 'fieldW'],
+  ['fieldW', 'westPromenadeN'], ['westPromenadeN', 'libA'],
+  ['dormA', 'libA'], ['dormA', 'libNorthCorr'],
+  ['classSouthCorr', 'libSouthCorr'],
+
+  // 6. East Wing: Cafeteria Multi-Route Approaches
+  ['eMid', 'cafA'], ['eMid', 'cafNorthCorr'], ['cafNorthCorr', 'cafA'],
+  ['cafA', 'cafSouthCorr'],
+  ['cafA', 'cafApproach1'], ['cafSouthCorr', 'cafApproach2'], ['cafNorthCorr', 'cafApproach3'],
+  ['cafApproach1', 'cafDoor'], ['cafApproach2', 'cafDoor'], ['cafApproach3', 'cafDoor'],
+  ['cafDoor', 'cafInterior'],
+
+  // 7. East Wing: Gymnasium Multi-Route Approaches
+  ['eMid', 'gymA'], ['eMid', 'gymSouthCorr'], ['gymSouthCorr', 'gymA'],
+  ['gymA', 'gymNorthCorr'],
+  ['gymA', 'gymApproach1'], ['gymNorthCorr', 'gymApproach2'], ['gymSouthCorr', 'gymApproach3'],
+  ['gymApproach1', 'gymDoor'], ['gymApproach2', 'gymDoor'], ['gymApproach3', 'gymDoor'],
+  ['gymDoor', 'gymInterior'],
+  ['cafSouthCorr', 'gymSouthCorr'],
+
+  // 8. North Promenade, Commercial Sector & Front Gate Network
   ['plazaN', 'northA'], ['northA', 'northB'], ['northB', 'gateN'],
-  ['wMid', 'classA'], ['classA', 'classDoor'], ['wMid', 'libA'], ['libA', 'libDoor'],
-  ['eMid', 'cafA'], ['cafA', 'cafDoor'], ['eMid', 'gymA'], ['gymA', 'gymDoor'],
-  ['northA', 'dormA'], ['dormA', 'dormDoor'], ['dormA', 'roomA'], ['roomA', 'roomDoor'],
-  ['dormA', 'fieldW'], ['fieldW', 'aquaW'],
-  ['northA', 'storeA'], ['storeA', 'storeDoor'], ['storeA', 'cafeA'], ['cafeA', 'cafeDoor'], ['storeA', 'eNorth'],
-  ['eNorth', 'mallA'], ['mallA', 'mallDoor'], ['eNorth', 'gymA']
+  ['northA', 'dormA'], ['plazaN', 'dormA'],
+  ['northA', 'storeA'], ['plazaN', 'storeA'],
+  ['storeA', 'storeDoor'], ['storeA', 'cafeA'], ['cafeA', 'cafeDoor'],
+  ['storeA', 'eNorth'], ['storeA', 'eMid'],
+  ['eNorth', 'mallA'], ['mallA', 'mallDoor'],
+  ['eNorth', 'gymA'], ['eNorth', 'gymNorthCorr'],
+  ['eNorth', 'eastPromenadeN'], ['eastPromenadeN', 'gymA']
 ];
 
 const NAV_ADJ = {};
 for (const k of Object.keys(NAV_NODES)) NAV_ADJ[k] = [];
-for (const [a, b] of NAV_EDGES) { NAV_ADJ[a].push(b); NAV_ADJ[b].push(a); }
-
-function navPath(from, to) {
-  if (from === to) return [to];
-  const prev = { [from]: null }, q = [from];
-  while (q.length) {
-    const cur = q.shift();
-    if (cur === to) break;
-    for (const nb of NAV_ADJ[cur] || []) if (!(nb in prev)) { prev[nb] = cur; q.push(nb); }
+for (const [a, b] of NAV_EDGES) {
+  if (NAV_ADJ[a] && NAV_ADJ[b]) {
+    NAV_ADJ[a].push(b);
+    NAV_ADJ[b].push(a);
   }
-  if (!(to in prev)) return [to];
-  const out = []; for (let c = to; c; c = prev[c]) out.unshift(c);
-  return out;
+}
+
+// =========================================================================
+// TRAFFIC MANAGER (CORRIDOR LOAD MONITORING)
+// =========================================================================
+export const TrafficManager = {
+  edgeTraffic: {},
+  nodeTraffic: {},
+  edgeKey(a, b) {
+    return a < b ? `${a}---${b}` : `${b}---${a}`;
+  },
+  addRouteTraffic(npcId, nodeKeys) {
+    if (!nodeKeys || nodeKeys.length === 0) return;
+    for (let i = 0; i < nodeKeys.length; i++) {
+      const n = nodeKeys[i];
+      this.nodeTraffic[n] = (this.nodeTraffic[n] || 0) + 1;
+      if (i < nodeKeys.length - 1) {
+        const ek = this.edgeKey(nodeKeys[i], nodeKeys[i + 1]);
+        this.edgeTraffic[ek] = (this.edgeTraffic[ek] || 0) + 1;
+      }
+    }
+  },
+  removeRouteTraffic(npcId, nodeKeys) {
+    if (!nodeKeys || nodeKeys.length === 0) return;
+    for (let i = 0; i < nodeKeys.length; i++) {
+      const n = nodeKeys[i];
+      if (this.nodeTraffic[n]) this.nodeTraffic[n] = Math.max(0, this.nodeTraffic[n] - 1);
+      if (i < nodeKeys.length - 1) {
+        const ek = this.edgeKey(nodeKeys[i], nodeKeys[i + 1]);
+        if (this.edgeTraffic[ek]) this.edgeTraffic[ek] = Math.max(0, this.edgeTraffic[ek] - 1);
+      }
+    }
+  },
+  getRouteTrafficCost(nodeKeys) {
+    if (!nodeKeys || nodeKeys.length < 2) return 0;
+    let cost = 0;
+    for (let i = 0; i < nodeKeys.length - 1; i++) {
+      const ek = this.edgeKey(nodeKeys[i], nodeKeys[i + 1]);
+      const load = this.edgeTraffic[ek] || 0;
+      cost += load * 7.5; // 7.5m equivalent distance cost per other student on edge
+    }
+    return cost;
+  },
+  getNodeLoad(nodeKey) {
+    return this.nodeTraffic[nodeKey] || 0;
+  }
+};
+
+// =========================================================================
+// DOORWAY QUEUE MANAGER (BOTTLENECK FLOW ARBITRATION)
+// =========================================================================
+export const DoorwayQueueManager = {
+  doors: {
+    class1d:   { pos: [-56.0, -20.0], occupant: null, expireAt: 0 },
+    library:   { pos: [-50.0, 22.0],  occupant: null, expireAt: 0 },
+    cafeteria: { pos: [52.0, -20.0],  occupant: null, expireAt: 0 },
+    gym:       { pos: [50.0, 22.0],   occupant: null, expireAt: 0 },
+    dorm:      { pos: [-34.0, 48.0],  occupant: null, expireAt: 0 }
+  },
+  canEnterDoor(doorKey, npcId, now) {
+    const door = this.doors[doorKey];
+    if (!door) return true;
+    if (door.occupant === npcId) return true;
+    if (!door.occupant || now > door.expireAt) {
+      door.occupant = npcId;
+      door.expireAt = now + 2.2;
+      return true;
+    }
+    return false;
+  },
+  clearDoor(doorKey, npcId) {
+    const door = this.doors[doorKey];
+    if (door && door.occupant === npcId) {
+      door.occupant = null;
+      door.expireAt = 0;
+    }
+  },
+  clearAllForNPC(npcId) {
+    for (const d of Object.values(this.doors)) {
+      if (d.occupant === npcId) {
+        d.occupant = null;
+        d.expireAt = 0;
+      }
+    }
+  }
+};
+
+// =========================================================================
+// ROUTE MANAGER (MULTI-CANDIDATE PATH GENERATION & SCORING)
+// =========================================================================
+export const RouteManager = {
+  findCandidateRoutes(fromNode, toNode) {
+    if (fromNode === toNode) return [[fromNode]];
+    const candidates = [];
+    
+    // 1. Primary shortest path
+    const p1 = this._shortestPath(fromNode, toNode, []);
+    if (p1) candidates.push(p1);
+
+    // 2. Discover alternate diverse paths by penalizing intermediate segments
+    if (p1 && p1.length > 2) {
+      for (let i = 1; i < p1.length - 1; i++) {
+        const bannedEdge = TrafficManager.edgeKey(p1[i], p1[i + 1]);
+        const pAlt = this._shortestPath(fromNode, toNode, [bannedEdge]);
+        if (pAlt && !candidates.some(c => this._pathsEqual(c, pAlt))) {
+          candidates.push(pAlt);
+          if (candidates.length >= 4) break;
+        }
+      }
+    }
+
+    if (candidates.length === 0) return [[fromNode, toNode]];
+    return candidates;
+  },
+
+  _pathsEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  },
+
+  _shortestPath(from, to, bannedEdges = []) {
+    const q = [[from]];
+    const visited = new Set();
+    while (q.length > 0) {
+      const path = q.shift();
+      const cur = path[path.length - 1];
+      if (cur === to) return path;
+      if (visited.has(cur) && path.length > 6) continue;
+      visited.add(cur);
+      const neighbors = NAV_ADJ[cur] || [];
+      for (const nb of neighbors) {
+        if (path.includes(nb)) continue;
+        const ek = TrafficManager.edgeKey(cur, nb);
+        if (bannedEdges.includes(ek)) continue;
+        q.push([...path, nb]);
+      }
+    }
+    return null;
+  },
+
+  _pathDistance(nodeKeys) {
+    let d = 0;
+    for (let i = 0; i < nodeKeys.length - 1; i++) {
+      const a = NAV_NODES[nodeKeys[i]], b = NAV_NODES[nodeKeys[i + 1]];
+      if (a && b) d += Math.hypot(a[0] - b[0], a[1] - b[1]);
+    }
+    return d;
+  },
+
+  selectBestRoute(fromNode, toNode, npc) {
+    const candidates = this.findCandidateRoutes(fromNode, toNode);
+    if (candidates.length === 1) return { route: candidates[0], routeId: 'ROUTE_PRIMARY_DIRECT', allCandidates: candidates };
+
+    let bestScore = Infinity;
+    let bestRoute = candidates[0];
+    let bestIdx = 0;
+
+    let hash = 0;
+    const seedStr = (npc?.id || '') + '_' + Math.floor(clockMin / 15);
+    for (let i = 0; i < seedStr.length; i++) hash = (hash * 31 + seedStr.charCodeAt(i)) & 0xffffffff;
+    const seedOffset = ((Math.abs(hash) % 5) - 2) * 1.6;
+
+    candidates.forEach((cand, idx) => {
+      const dist = this._pathDistance(cand);
+      const traffic = TrafficManager.getRouteTrafficCost(cand);
+      const score = dist + traffic + (idx === (Math.abs(hash) % candidates.length) ? -2.2 : seedOffset);
+      if (score < bestScore) {
+        bestScore = score;
+        bestRoute = cand;
+        bestIdx = idx;
+      }
+    });
+
+    const routeLetter = String.fromCharCode(65 + bestIdx);
+    const routeId = `ROUTE_${routeLetter}_${bestRoute.length}ND`;
+    return { route: bestRoute, routeId, allCandidates: candidates };
+  }
+};
+
+function navPath(from, to, options = {}) {
+  const res = RouteManager.selectBestRoute(from, to, options);
+  return res.route;
 }
 
 function nearestNode(x, z) {
@@ -906,249 +1359,398 @@ function buildCentralPark() {
 
 function buildAcademicBuilding() {
   const g = grpAcademicNorth;
-  g.position.set(0, 0, -56);
+  g.position.set(0, 0, 0);
 
   const M = {
     steel: std({ color: 0x3a3d40, roughness: 0.3, metalness: 0.85 }),
     glass: phys({ color: 0xa8c2d4, transmission: 0.88, roughness: 0.1, ior: 1.5 }),
+    glassDoor: phys({ color: 0x7fa0b8, transmission: 0.8, roughness: 0.12 }),
     concrete: std({ color: 0xb0b0b0, roughness: 0.45 }),
     concreteDark: std({ color: 0x808388, roughness: 0.55 }),
-    roofGrey: std({ color: 0x71747a, roughness: 0.7 })
+    roofGrey: std({ color: 0x71747a, roughness: 0.7 }),
+    wood: std({ color: 0x5c3a21, roughness: 0.5 }),
+    floor: phys({ map: tileTexture('#e2ded4', '#d0ccc0', 8), roughness: 0.25, clearcoat: 0.4 }),
+    sign: std({ map: textSignTexture('MAIN ACADEMIC CENTER', 90, '#FFFFFF', '#0F172A'), emissive: 0xffffff, emissiveIntensity: 0.8 })
   };
 
   const BLD = { L: 60, D: 26, H: 17, stories: 4 };
+  const bZ = -56;
 
+  // Floor slabs
   for (let k = 0; k <= BLD.stories; k++) {
-    makeBox(BLD.L, 0.4, BLD.D, M.concreteDark, 0, 4.25 * k + 0.2, 0, g);
+    makeBox(BLD.L, 0.4, BLD.D, M.concreteDark, 0, 4.25 * k + 0.2, bZ, g);
   }
 
+  // Interior ground floor lobby
+  makeBox(58, 0.05, 24, M.floor, 0, 0.02, bZ, g);
+  makeBox(6, 1.1, 1.4, M.wood, 0, 0.55, bZ + 7, g); // Reception desk
+  makeBox(0.1, 3.8, 10, std({ color: 0xefede8 }), 16, 1.9, bZ, g); // Corridor partition
+
+  // Soft interior light
+  const lobbyLight = new THREE.PointLight(0xfff8ee, 30, 20, 2);
+  lobbyLight.position.set(0, 3.8, bZ + 6);
+  g.add(lobbyLight);
+
+  // Exterior glass facade & structural pillars
   const rows = 4, bays = 12;
   const bayW = BLD.L / bays, glassH = 3.8;
   for (let r = 0; r < rows; r++) {
     for (let b = 0; b < bays; b++) {
       const bx = -BLD.L / 2 + bayW * (b + 0.5);
       const by = 2.2 + 4.25 * r;
-      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, BLD.D / 2, g, false);
-      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, -BLD.D / 2, g, false);
+      // Skip doorway bay on ground floor
+      if (r === 0 && Math.abs(bx) < 3.5) continue;
+      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, bZ + BLD.D / 2, g, false);
+      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, bZ - BLD.D / 2, g, false);
     }
   }
 
   for (let b = 0; b <= bays; b++) {
     const px = -BLD.L / 2 + bayW * b;
-    makeBox(0.6, BLD.H, 0.6, M.steel, px, BLD.H / 2, BLD.D / 2 + 0.1, g);
-    makeBox(0.6, BLD.H, 0.6, M.steel, px, BLD.H / 2, -BLD.D / 2 - 0.1, g);
+    makeBox(0.6, BLD.H, 0.6, M.steel, px, BLD.H / 2, bZ + BLD.D / 2 + 0.1, g);
+    makeBox(0.6, BLD.H, 0.6, M.steel, px, BLD.H / 2, bZ - BLD.D / 2 - 0.1, g);
   }
 
-  makeBox(18, 0.4, 6, M.concrete, 0, 6.4, BLD.D / 2 + 3.2, g);
-  makeBox(0.5, 6.4, 0.5, M.steel, -7.5, 3.2, BLD.D / 2 + 5.8, g);
-  makeBox(0.5, 6.4, 0.5, M.steel, 7.5, 3.2, BLD.D / 2 + 5.8, g);
-  makeBox(14, 0.8, 5, M.concrete, 0, 0.4, BLD.D / 2 + 2.5, g);
+  // Entrance Canopy & Steps (South entrance at Z = -43)
+  makeBox(16, 0.4, 5.5, M.concrete, 0, 6.4, bZ + BLD.D / 2 + 3.0, g);
+  makeBox(0.5, 6.4, 0.5, M.steel, -7.0, 3.2, bZ + BLD.D / 2 + 5.2, g);
+  makeBox(0.5, 6.4, 0.5, M.steel, 7.0, 3.2, bZ + BLD.D / 2 + 5.2, g);
+  makeBox(12, 0.6, 3.5, M.concrete, 0, 0.3, bZ + BLD.D / 2 + 2.0, g);
 
-  makeBox(8, 3.2, 8, M.concreteDark, 0, BLD.H + 1.6, 0, g);
-  makeBox(5, 1.8, 3.5, M.roofGrey, -16, BLD.H + 0.9, -4, g);
-  makeBox(4, 1.5, 3.0, M.roofGrey, 16, BLD.H + 0.75, 4, g);
+  // Sliding glass entrance doors at X = 0, Z = -43
+  makeBox(0.1, 3.8, 0.1, M.steel, -2.5, 1.9, bZ + BLD.D / 2, g);
+  makeBox(0.1, 3.8, 0.1, M.steel, 2.5, 1.9, bZ + BLD.D / 2, g);
+  makeBox(5.0, 0.4, 0.15, M.steel, 0, 3.8, bZ + BLD.D / 2, g);
+  makeBox(4.8, 0.5, 0.1, M.sign, 0, 4.4, bZ + BLD.D / 2 + 0.05, g);
 
-  addCollider(0, -56 - 13, 60, 1.0);
-  addCollider(-30, -56, 1.0, 26);
-  addCollider(30, -56, 1.0, 26);
-  addCollider(-20, -56 + 13, 20, 1.0);
-  addCollider(20, -56 + 13, 20, 1.0);
+  // Roof utilities
+  makeBox(8, 3.2, 8, M.concreteDark, 0, BLD.H + 1.6, bZ, g);
+  makeBox(5, 1.8, 3.5, M.roofGrey, -16, BLD.H + 0.9, bZ - 4, g);
+  makeBox(4, 1.5, 3.0, M.roofGrey, 16, BLD.H + 0.75, bZ + 4, g);
 
-  makeLabel('MAIN HALL & ACADEMIC', 0, 18.5, -56 + 13.5, 0xffffff, 3.0);
+  // Complete Colliders: North/West/East walls + South wall split around entrance
+  addCollider(0, bZ - BLD.D / 2, 60, 1.0);  // Back wall
+  addCollider(-30, bZ, 1.0, 26);             // Left wall
+  addCollider(30, bZ, 1.0, 26);              // Right wall
+  addCollider(-16.25, bZ + BLD.D / 2, 27.5, 1.0); // South wall left
+  addCollider(16.25, bZ + BLD.D / 2, 27.5, 1.0);  // South wall right
+  addCollider(0, bZ + 7, 6.0, 1.4);         // Reception desk
+
+  makeLabel('MAIN HALL & ACADEMIC', 0, 18.5, bZ + 13.5, 0xffffff, 3.0);
 }
 
 function buildClassroom1D() {
-  const g = new THREE.Group();
-  g.position.set(-62, 0.2, -20);
-  g.rotation.y = -Math.PI / 2;
+  const g = grpWestWing;
+  const cX = -62, cZ = -20;
 
-  const matFloor = std({ map: tileTexture('#d6c7b2', '#c4b59f', 6), roughness: 0.5 });
-  const matWall = std({ color: 0xf0ede6, roughness: 0.9 });
-  const matBoard = std({ color: 0x1f4738, roughness: 0.6 });
-  const matDesk = std({ color: 0xcca872, roughness: 0.5 });
-  const matSteel = std({ color: 0x3a3f45, roughness: 0.4, metalness: 0.8 });
+  const matFloor = phys({ map: tileTexture('#d4a373', '#b98b5b', 6), roughness: 0.25, clearcoat: 0.5 });
+  const matWall = std({ color: 0xefede8, roughness: 0.9 });
+  const matBoard = phys({ color: 0x1a3d2e, roughness: 0.2, clearcoat: 0.6 });
+  const matDesk = std({ color: 0xe6c280, roughness: 0.4 });
+  const matChair = std({ color: 0xdcb283, roughness: 0.45 });
+  const matSteel = std({ color: 0x333333, roughness: 0.3, metalness: 0.85 });
+  const matGlass = phys({ color: 0xdfe8f0, transmission: 0.92, roughness: 0.05 });
+  const matLocker = std({ color: 0x333842, roughness: 0.4, metalness: 0.7 });
+  const matCeiling = std({ color: 0xf4f4f0, roughness: 0.9 });
+  const matDoor = phys({ color: 0x8f6036, roughness: 0.35, clearcoat: 0.4 });
+  const matFrame = std({ color: 0x3a3f44, roughness: 0.4, metalness: 0.5 });
 
-  makeBox(12, 0.1, 9, matFloor, 0, 0, 0, g, false, true);
-  makeBox(12, 3.5, 0.15, matWall, 0, 1.75, -4.5, g);
-  makeBox(0.15, 3.5, 9, matWall, -6.0, 1.75, 0, g);
+  // 1. Walkable Hardwood Floor (12m x 9m)
+  makeBox(12, 0.05, 9, matFloor, cX, 0.02, cZ, g, false, true);
 
-  makeBox(6.5, 1.4, 0.05, matBoard, 0, 1.8, -4.42, g);
-  makeBox(1.6, 1.0, 0.9, matDesk, 0, 0.5, -3.2, g);
+  // 2. North Front Wall (Z = -24.5) with Whiteboard, Wall Displays & Teacher Dais
+  makeBox(12, 3.5, 0.3, matWall, cX, 1.75, cZ - 4.5, g);
+  makeBox(4.5, 1.3, 0.05, matBoard, cX, 1.8, cZ - 4.32, g);
+  for (const dx of [-4.2, 4.2]) {
+    makeBox(1.2, 0.7, 0.05, matSteel, cX + dx, 2.0, cZ - 4.32, g);
+  }
+  // Teacher Dais & Walnut Podium
+  makeBox(4.5, 0.15, 1.4, std({ color: 0x9c7148 }), cX - 1.0, 0.075, cZ - 3.2, g);
+  makeBox(0.8, 1.0, 0.55, matDoor, cX - 2.0, 0.58, cZ - 3.2, g);
 
-  for (let row = 0; row < 5; row++) {
-    for (let col = 0; col < 5; col++) {
-      const dx = -3.6 + col * 1.8;
-      const dz = -1.6 + row * 1.3;
-      makeBox(0.9, 0.04, 0.55, matDesk, dx, 0.72, dz, g);
-      makeBox(0.04, 0.7, 0.04, matSteel, dx - 0.4, 0.35, dz - 0.22, g);
-      makeBox(0.04, 0.7, 0.04, matSteel, dx + 0.4, 0.35, dz - 0.22, g);
-      makeBox(0.42, 0.03, 0.4, matDesk, dx, 0.45, dz + 0.42, g);
-      makeBox(0.42, 0.4, 0.03, matDesk, dx, 0.75, dz + 0.6, g);
+  // 3. South Storage Wall (Z = -15.5) with 5x5 Locker Bank
+  makeBox(12, 3.5, 0.3, matWall, cX, 1.75, cZ + 4.5, g);
+  makeBox(10.0, 2.4, 0.4, matLocker, cX, 1.2, cZ + 4.2, g);
+
+  // 4. West Glass Curtain Wall (X = -68) with Daylight Windows & Blinds
+  makeBox(0.3, 3.5, 9, matWall, cX - 6.0, 1.75, cZ, g);
+  makeBox(0.05, 2.4, 7.8, matGlass, cX - 6.05, 1.8, cZ, g);
+
+  // 5. East Entrance Wall (X = -56) with REAL WALKABLE DOORWAY (at Z = -20)
+  // North segment (Z: -24.5 to -20.7, length 3.8m)
+  makeBox(0.3, 3.5, 3.8, matWall, cX + 6.0, 1.75, cZ - 2.6, g);
+  // South segment (Z: -19.3 to -15.5, length 3.8m)
+  makeBox(0.3, 3.5, 3.8, matWall, cX + 6.0, 1.75, cZ + 2.6, g);
+  // Doorway Header (above Y = 2.5m)
+  makeBox(0.3, 1.0, 1.4, matWall, cX + 6.0, 3.0, cZ, g);
+
+  // Doorway Detailing: Jambs, Threshold Step, Entrance Mat, Door Leaf
+  makeBox(0.34, 2.5, 0.1, matFrame, cX + 6.0, 1.25, cZ - 0.7, g);
+  makeBox(0.34, 2.5, 0.1, matFrame, cX + 6.0, 1.25, cZ + 0.7, g);
+  makeBox(0.34, 0.1, 1.5, matFrame, cX + 6.0, 2.5, cZ, g);
+  makeBox(0.6, 0.03, 1.4, std({ color: 0x666a70 }), cX + 6.0, 0.015, cZ, g); // stone threshold
+  makeBox(0.8, 0.015, 1.2, std({ color: 0x33423a }), cX + 4.8, 0.01, cZ, g);  // entrance mat
+  // Open hinged door leaf
+  makeBox(0.05, 2.1, 0.85, matDoor, cX + 5.5, 1.05, cZ - 0.9, g);
+
+  // Room Entrance Label Sign
+  makeBox(0.08, 0.45, 1.8, std({ map: textSignTexture('CLASS 1-D', 90, '#FFFFFF', '#1E293B'), emissive: 0xffffff, emissiveIntensity: 0.8 }), cX + 6.18, 2.85, cZ, g);
+
+  // 6. Suspended Acoustic Ceiling & Recessed LED Lights
+  makeBox(12, 0.15, 9, matCeiling, cX, 3.55, cZ, g);
+  for (const px of [-65, -62, -59]) {
+    for (const pz of [-22, -18]) {
+      makeBox(1.5, 0.02, 1.0, std({ color: 0xfff8e7, emissive: 0xfff3d6, emissiveIntensity: 1.2 }), px, 3.48, pz, g);
     }
   }
 
-  addCollider(-62, -20 - 4.5, 9, 0.5);
-  addCollider(-62, -20 + 4.5, 9, 0.5);
-  addCollider(-62 - 6.0, -20, 0.5, 12);
-  makeLabel('CLASS 1-D', -62 + 6.2, 3.5, -20, 0xffffff, 2.2);
+  // Soft Interior Lighting Point
+  const classLight = new THREE.PointLight(0xfff5e6, 30, 16, 2);
+  classLight.position.set(cX, 3.1, cZ);
+  g.add(classLight);
 
-  grpWestWing.add(g);
+  // 7. Student Seating Array (5x5 = 25 Desks & Chairs)
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 5; col++) {
+      const deskX = -65.5 + col * 1.5;
+      const deskZ = -22.4 + row * 1.2;
+      // Desk
+      makeBox(0.75, 0.04, 0.48, matDesk, deskX, 0.72, deskZ, g);
+      makeBox(0.04, 0.7, 0.04, matSteel, deskX - 0.32, 0.35, deskZ - 0.2, g);
+      makeBox(0.04, 0.7, 0.04, matSteel, deskX + 0.32, 0.35, deskZ - 0.2, g);
+      makeBox(0.04, 0.7, 0.04, matSteel, deskX - 0.32, 0.35, deskZ + 0.2, g);
+      makeBox(0.04, 0.7, 0.04, matSteel, deskX + 0.32, 0.35, deskZ + 0.2, g);
+      // Chair (facing North toward whiteboard)
+      const chairZ = deskZ + 0.45;
+      makeBox(0.42, 0.04, 0.4, matChair, deskX, 0.45, chairZ, g);
+      makeBox(0.42, 0.45, 0.03, matChair, deskX, 0.72, chairZ + 0.18, g);
+      makeBox(0.03, 0.44, 0.03, matSteel, deskX - 0.18, 0.22, chairZ - 0.16, g);
+      makeBox(0.03, 0.44, 0.03, matSteel, deskX + 0.18, 0.22, chairZ - 0.16, g);
+    }
+  }
+
+  // 8. Solid Colliders: 4 Exterior Walls (Doorway open) + Dais + Desk Rows
+  addCollider(cX, cZ - 4.5, 12.0, 0.4);  // North wall
+  addCollider(cX, cZ + 4.5, 12.0, 0.4);  // South wall
+  addCollider(cX - 6.0, cZ, 0.4, 9.0);   // West wall
+  addCollider(cX + 6.0, cZ - 2.6, 0.4, 3.8); // East wall North
+  addCollider(cX + 6.0, cZ + 2.6, 0.4, 3.8); // East wall South
+  addCollider(cX - 1.0, cZ - 3.2, 4.5, 1.4); // Teacher dais
+  for (let r = 0; r < 5; r++) {
+    addCollider(cX - 0.5, cZ - 2.4 + r * 1.2, 6.8, 0.5); // Desk row colliders
+  }
+
+  makeLabel('CLASS 1-D', cX + 6.5, 3.5, cZ, 0xffffff, 2.2);
 }
 
 function buildMemorialLibrary() {
-  const g = new THREE.Group();
-  g.position.set(-62, 0, 22);
-  g.rotation.y = -Math.PI / 2;
+  const g = grpWestWing;
+  const cX = -62, cZ = 22;
 
   const matWood = std({ color: 0x5c3a21, roughness: 0.5 });
-  const matFloor = std({ map: tileTexture('#8a6238', '#6b4a2c', 8), roughness: 0.5 });
+  const matFloor = phys({ map: tileTexture('#8a6238', '#6b4a2c', 8), roughness: 0.35, clearcoat: 0.4 });
   const matGlass = phys({ color: 0xf7ead2, transmission: 0.85, roughness: 0.1 });
   const matBanker = std({ color: 0x1b4d3e, emissive: 0x37c46e, emissiveIntensity: 1.5 });
+  const matStone = std({ color: 0x94a3b8, roughness: 0.6 });
 
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(14, 48), matFloor);
+  // Walkable Floor
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(24, 24), matFloor);
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0.04;
+  floor.position.set(cX, 0.03, cZ);
+  floor.receiveShadow = true;
   g.add(floor);
 
-  const wallGeo = new THREE.CylinderGeometry(14, 14, 7, 36, 1, true, 0, Math.PI * 1.5);
-  const wallMesh = new THREE.Mesh(wallGeo, matGlass);
-  wallMesh.position.y = 3.5;
+  // Exterior Glass Curtain Wall with East Entrance (X = -50, Z = 22)
+  const wallMesh = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 6, 32, 1, true, 0.3, Math.PI * 1.8), matGlass);
+  wallMesh.position.set(cX, 3.0, cZ);
   g.add(wallMesh);
 
-  for (let a = 0.2; a < Math.PI * 1.3; a += 0.45) {
-    const rx = Math.cos(a) * 9.5, rz = Math.sin(a) * 9.5;
-    const shelf = makeBox(4.2, 4.5, 0.8, matWood, rx, 2.25, rz, g);
+  // Entrance Casing & Steps at X = -50, Z = 22
+  makeBox(0.4, 3.8, 0.2, matStone, cX + 12, 1.9, cZ - 2.0, g);
+  makeBox(0.4, 3.8, 0.2, matStone, cX + 12, 1.9, cZ + 2.0, g);
+  makeBox(0.4, 0.4, 4.2, matStone, cX + 12, 3.8, cZ, g);
+  makeBox(1.6, 0.05, 3.8, matStone, cX + 12, 0.02, cZ, g);
+
+  // Interior radial bookshelves
+  for (let a = 0.5; a < Math.PI * 1.5; a += 0.45) {
+    const rx = cX + Math.cos(a) * 8.5, rz = cZ + Math.sin(a) * 8.5;
+    const shelf = makeBox(3.8, 4.2, 0.8, matWood, rx, 2.1, rz, g);
     shelf.rotation.y = -a + Math.PI / 2;
   }
 
-  const desk = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.0, 1.1, 24, 1, true), matWood);
-  desk.position.y = 0.55;
+  // Central librarian desk
+  const desk = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.8, 1.1, 20), matWood);
+  desk.position.set(cX, 0.55, cZ);
   g.add(desk);
 
-  for (const sx of [-5, 5]) {
-    makeBox(3.5, 0.75, 1.2, matWood, sx, 0.38, 2, g);
-    makeBox(0.4, 0.2, 0.2, matBanker, sx, 0.85, 2, g);
+  // Study tables
+  for (const sx of [-4, 4]) {
+    makeBox(3.2, 0.75, 1.2, matWood, cX + sx, 0.38, cZ + 4, g);
+    makeBox(0.4, 0.2, 0.2, matBanker, cX + sx, 0.85, cZ + 4, g);
+    makeBox(3.2, 0.75, 1.2, matWood, cX + sx, 0.38, cZ - 4, g);
+    makeBox(0.4, 0.2, 0.2, matBanker, cX + sx, 0.85, cZ - 4, g);
   }
 
-  addCollider(-62, 22 - 14, 14, 1);
-  addCollider(-62, 22 + 14, 14, 1);
-  addCollider(-62 - 14, 22, 1, 28);
-  makeLabel('MEMORIAL LIBRARY', -62 + 8, 4.5, 22, 0xffffff, 2.2);
+  // Interior Light
+  const libLight = new THREE.PointLight(0xfff3d6, 30, 18, 2);
+  libLight.position.set(cX, 3.5, cZ);
+  g.add(libLight);
 
-  grpWestWing.add(g);
+  // Complete Colliders (Doorway open at X = -50, Z = 22)
+  addCollider(cX, cZ + 12.0, 24.0, 1.0);  // North wall
+  addCollider(cX, cZ - 12.0, 24.0, 1.0);  // South wall
+  addCollider(cX - 12.0, cZ, 1.0, 24.0);  // West wall
+  addCollider(cX + 12.0, cZ + 6.5, 1.0, 11.0); // East wall North
+  addCollider(cX + 12.0, cZ - 6.5, 1.0, 11.0); // East wall South
+  addCollider(cX, cZ, 4.0, 4.0);          // Central librarian desk
+
+  makeLabel('MEMORIAL LIBRARY', cX + 8, 4.5, cZ, 0xffffff, 2.2);
 }
 
 function buildCouncilRoom() {
-  const g = new THREE.Group();
-  g.position.set(26, 0.2, -56);
+  const g = grpAcademicNorth;
+  const cX = 26, cZ = -56;
 
   const matCarpet = std({ color: 0x2b2d38, roughness: 0.95 });
   const matMahogany = phys({ color: 0x3d1c06, roughness: 0.2, metalness: 0.1, clearcoat: 0.8 });
   const matLeather = std({ color: 0x181818, roughness: 0.3 });
   const matWall = std({ color: 0x383430, roughness: 0.85 });
 
-  makeBox(12, 0.1, 8, matCarpet, 0, 0, 0, g);
-  makeBox(12, 3.2, 0.15, matWall, 0, 1.6, -4.0, g);
-  makeBox(0.15, 3.2, 8, matWall, 6.0, 1.6, 0, g);
+  makeBox(12, 0.05, 8, matCarpet, cX, 0.03, cZ, g);
+  makeBox(12, 3.2, 0.2, matWall, cX, 1.6, cZ - 4.0, g);
+  makeBox(12, 3.2, 0.2, matWall, cX, 1.6, cZ + 4.0, g);
+  makeBox(0.2, 3.2, 8, matWall, cX + 6.0, 1.6, cZ, g);
+  // West wall with door opening to main hall
+  makeBox(0.2, 3.2, 2.8, matWall, cX - 6.0, 1.6, cZ - 2.6, g);
+  makeBox(0.2, 3.2, 2.8, matWall, cX - 6.0, 1.6, cZ + 2.6, g);
+  makeBox(0.2, 0.8, 2.4, matWall, cX - 6.0, 2.8, cZ, g);
 
-  makeBox(6.0, 0.06, 1.2, matMahogany, 0, 0.75, -1.8, g);
-  makeBox(1.2, 0.06, 3.6, matMahogany, -2.4, 0.75, 0.4, g);
-  makeBox(1.2, 0.06, 3.6, matMahogany, 2.4, 0.75, 0.4, g);
-
-  for (const cx of [-2.4, -1.2, 0, 1.2, 2.4]) {
-    makeBox(0.55, 0.08, 0.55, matLeather, cx, 0.48, -2.6, g);
-    makeBox(0.55, 0.75, 0.08, matLeather, cx, 0.88, -2.9, g);
+  // Conference table & chairs
+  makeBox(6.0, 0.08, 1.4, matMahogany, cX, 0.75, cZ, g);
+  for (const dx of [-2.0, 0, 2.0]) {
+    makeBox(0.55, 0.08, 0.55, matLeather, cX + dx, 0.48, cZ - 1.2, g);
+    makeBox(0.55, 0.08, 0.55, matLeather, cX + dx, 0.48, cZ + 1.2, g);
   }
 
-  makeBox(2.2, 2.0, 0.04, std({ color: 0x8b0000 }), 0, 2.0, -3.92, g);
-  makeBox(4.5, 2.4, 0.6, std({ color: 0x1f242d }), 5.6, 1.2, 0, g);
+  // Colliders
+  addCollider(cX, cZ - 4.0, 12, 0.4);
+  addCollider(cX, cZ + 4.0, 12, 0.4);
+  addCollider(cX + 6.0, cZ, 0.4, 8);
+  addCollider(cX - 6.0, cZ - 2.6, 0.4, 2.8);
+  addCollider(cX - 6.0, cZ + 2.6, 0.4, 2.8);
+  addCollider(cX, cZ, 6.0, 1.4);
 
-  makeLabel('STUDENT COUNCIL', 26 - 6.2, 3.2, -56, 0xffffff, 2.0);
-  grpAcademicNorth.add(g);
+  makeLabel('STUDENT COUNCIL', cX - 6.2, 3.2, cZ, 0xffffff, 2.0);
 }
 
 function buildSchoolCafeteria() {
-  const g = new THREE.Group();
-  g.position.set(62, 0, -20);
-  g.rotation.y = Math.PI / 2;
+  const g = grpEastWing;
+  const cX = 62, cZ = -20;
 
   const matFloor = phys({ color: 0xe5d3b3, roughness: 0.15, clearcoat: 0.6 });
   const matSteel = std({ color: 0xc6c9ce, roughness: 0.25, metalness: 0.9 });
   const matTable = std({ color: 0xd6c49a, roughness: 0.5 });
   const matWall = std({ color: 0xf2efe8, roughness: 0.9 });
 
-  makeBox(30, 0.1, 20, matFloor, 0, 0, 0, g);
-  makeBox(30, 5, 0.2, matWall, 0, 2.5, -10, g);
-  makeBox(0.2, 5, 20, matWall, 15, 2.5, 0, g);
+  // 1. Walkable Floor
+  makeBox(24, 0.05, 24, matFloor, cX, 0.02, cZ, g);
 
-  makeBox(22, 1.1, 1.8, matSteel, 0, 0.55, -7.5, g);
-  makeBox(22, 0.05, 0.6, phys({ color: 0xffffff, transmission: 0.9 }), 0, 1.4, -6.8, g);
+  // 2. North, South, East Walls
+  makeBox(24, 5.0, 0.3, matWall, cX, 2.5, cZ - 12.0, g);
+  makeBox(24, 5.0, 0.3, matWall, cX, 2.5, cZ + 12.0, g);
+  makeBox(0.3, 5.0, 24, matWall, cX + 12.0, 2.5, cZ, g);
 
+  // 3. West Entrance Wall (X = 50) with Walkable Doorway at Z = -20
+  makeBox(0.3, 5.0, 10.0, matWall, cX - 12.0, 2.5, cZ - 7.0, g);
+  makeBox(0.3, 5.0, 10.0, matWall, cX - 12.0, 2.5, cZ + 7.0, g);
+  makeBox(0.3, 1.5, 4.0, matWall, cX - 12.0, 4.25, cZ, g);
+
+  // Serving counter & food display along East wall
+  makeBox(1.6, 1.1, 16.0, matSteel, cX + 9.5, 0.55, cZ, g);
+  makeBox(0.6, 0.05, 16.0, phys({ color: 0xffffff, transmission: 0.9 }), cX + 9.5, 1.4, cZ, g);
+
+  // 6 Dining Tables with Benches
   for (let r = 0; r < 3; r++) {
     for (let c = 0; c < 2; c++) {
-      const tx = -7 + c * 14, tz = -2 + r * 4.5;
-      makeBox(8, 0.06, 1.4, matTable, tx, 0.75, tz, g);
-      makeBox(8, 0.05, 0.45, matTable, tx, 0.45, tz - 1.1, g);
-      makeBox(8, 0.05, 0.45, matTable, tx, 0.45, tz + 1.1, g);
+      const tx = cX - 6 + c * 12, tz = cZ - 6 + r * 6;
+      makeBox(6.0, 0.06, 1.4, matTable, tx, 0.75, tz, g);
+      makeBox(6.0, 0.05, 0.45, matTable, tx, 0.45, tz - 1.1, g);
+      makeBox(6.0, 0.05, 0.45, matTable, tx, 0.45, tz + 1.1, g);
     }
   }
 
+  // Vending machines
   for (let v = 0; v < 4; v++) {
     const col = [0xd63031, 0x0984e3, 0x00b894, 0x6c5ce7][v];
-    makeBox(1.2, 2.1, 0.9, std({ color: col }), -13 + v * 1.8, 1.05, 8.5, g);
+    makeBox(1.2, 2.1, 0.9, std({ color: col }), cX - 10 + v * 1.8, 1.05, cZ + 10.5, g);
   }
 
-  addCollider(62, -20 - 15, 20, 1);
-  addCollider(62, -20 + 15, 20, 1);
-  addCollider(62 + 10, -20, 1, 30);
-  makeLabel('CAFETERIA', 62 - 8, 4.5, -20, 0xffffff, 2.2);
+  // Interior Light
+  const cafLight = new THREE.PointLight(0xfff5e0, 30, 18, 2);
+  cafLight.position.set(cX, 3.5, cZ);
+  g.add(cafLight);
 
-  grpEastWing.add(g);
+  // Complete Colliders (Doorway open at X = 50, Z = -20)
+  addCollider(cX, cZ - 12.0, 24.0, 1.0);  // North wall
+  addCollider(cX, cZ + 12.0, 24.0, 1.0);  // South wall
+  addCollider(cX + 12.0, cZ, 1.0, 24.0);  // East wall
+  addCollider(cX - 12.0, cZ - 7.0, 1.0, 10.0); // West wall North
+  addCollider(cX - 12.0, cZ + 7.0, 1.0, 10.0); // West wall South
+  addCollider(cX + 9.5, cZ, 2.0, 16.0);  // Food counter
+
+  makeLabel('CAFETERIA', cX - 8, 4.5, cZ, 0xffffff, 2.2);
 }
 
 function buildGymnasium() {
   const g = grpEastWing;
-  g.position.set(62, 0, 22);
-  g.rotation.y = Math.PI / 2;
+  const cX = 62, cZ = 22;
 
   const matCourt = phys({ map: tileTexture('#e3c08d', '#d9b37e', 16), roughness: 0.15, clearcoat: 0.6 });
   const matConcrete = std({ color: 0x9a9da0, roughness: 0.9 });
   const matTruss = std({ color: 0x8f979e, metalness: 0.7, roughness: 0.35 });
   const matGlass = phys({ color: 0xdfeaf4, transmission: 0.85, roughness: 0.1 });
 
-  makeBox(25, 0.2, 35, matCourt, 0, 0, 0, g);
+  // Walkable Floor
+  makeBox(24, 0.05, 28, matCourt, cX, 0.02, cZ, g);
 
-  makeBox(25.4, 6.0, 0.4, matConcrete, 0, 3.0, -17.5, g);
-  makeBox(25.4, 6.0, 0.4, matConcrete, 0, 3.0, 17.5, g);
-  makeBox(0.4, 6.0, 35.4, matConcrete, -12.5, 3.0, 0, g);
-  makeBox(0.4, 6.0, 35.4, matConcrete, 12.5, 3.0, 0, g);
+  // North, South, East Walls
+  makeBox(24, 6.0, 0.4, matConcrete, cX, 3.0, cZ - 14.0, g);
+  makeBox(24, 6.0, 0.4, matConcrete, cX, 3.0, cZ + 14.0, g);
+  makeBox(0.4, 6.0, 28, matConcrete, cX + 12.0, 3.0, cZ, g);
 
-  makeBox(25.2, 4.2, 0.1, matGlass, 0, 8.1, -17.5, g);
-  makeBox(25.2, 4.2, 0.1, matGlass, 0, 8.1, 17.5, g);
-  makeBox(0.1, 4.2, 35.2, matGlass, -12.5, 8.1, 0, g);
-  makeBox(0.1, 4.2, 35.2, matGlass, 12.5, 8.1, 0, g);
+  // West Entrance Wall with Double Doorway at Z = 22
+  makeBox(0.4, 6.0, 12.0, matConcrete, cX - 12.0, 3.0, cZ - 8.0, g);
+  makeBox(0.4, 6.0, 12.0, matConcrete, cX - 12.0, 3.0, cZ + 8.0, g);
+  makeBox(0.4, 2.0, 4.0, matConcrete, cX - 12.0, 5.0, cZ, g);
 
-  for (let z = -14; z <= 14; z += 7) {
-    makeBox(25, 0.8, 0.2, matTruss, 0, 10.4, z, g);
-  }
-
+  // Basketball hoops North & South
   for (const s of [-1, 1]) {
-    makeBox(0.2, 4.2, 0.2, matTruss, 0, 2.1, s * 16.2, g);
-    makeBox(2.2, 1.4, 0.08, phys({ color: 0xffffff, transmission: 0.9 }), 0, 3.6, s * 14.8, g);
+    makeBox(0.2, 4.2, 0.2, matTruss, cX, 2.1, cZ + s * 12.0, g);
+    makeBox(2.2, 1.4, 0.08, phys({ color: 0xffffff, transmission: 0.9 }), cX, 3.6, cZ + s * 11.2, g);
     const rim = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.03, 8, 16), std({ color: 0xe65100 }));
     rim.rotation.x = Math.PI / 2;
-    rim.position.set(0, 3.05, s * 14.2);
+    rim.position.set(cX, 3.05, cZ + s * 10.7);
     g.add(rim);
   }
 
+  // Bleachers along East wall
   for (let b = 0; b < 4; b++) {
-    makeBox(1.2, 0.45 * (b + 1), 28, matConcrete, -10.5 + b * 1.2, 0.225 * (b + 1), 0, g);
+    makeBox(1.0, 0.45 * (b + 1), 22, matConcrete, cX + 9.5 - b * 1.0, 0.225 * (b + 1), cZ, g);
   }
 
-  addCollider(62, 22 - 12.5, 35, 1);
-  addCollider(62, 22 + 12.5, 35, 1);
-  addCollider(62 + 17.5, 22, 1, 25);
-  makeLabel('GYMNASIUM', 62 - 12.5, 6.0, 22, 0xffffff, 2.2);
+  // Interior Light
+  const gymLight = new THREE.PointLight(0xfff8ee, 35, 20, 2);
+  gymLight.position.set(cX, 5.0, cZ);
+  g.add(gymLight);
+
+  // Complete Colliders (Doorway open at X = 50, Z = 22)
+  addCollider(cX, cZ - 14.0, 24.0, 1.0);  // North wall
+  addCollider(cX, cZ + 14.0, 24.0, 1.0);  // South wall
+  addCollider(cX + 12.0, cZ, 1.0, 28.0);  // East wall
+  addCollider(cX - 12.0, cZ - 8.0, 1.0, 12.0); // West wall North
+  addCollider(cX - 12.0, cZ + 8.0, 1.0, 12.0); // West wall South
+
+  makeLabel('GYMNASIUM', cX - 12.5, 6.0, cZ, 0xffffff, 2.2);
 }
 
 function buildAthleticsWest() {
@@ -1620,7 +2222,7 @@ function makeRig(cfg) {
   return { root, body, hips, torso, head, face, ...arms, ...legs, height: 1.74 * scale };
 }
 
-// Procedural Activity Animation Engine
+// Procedural Activity & Realistic Biomechanical Locomotion Engine
 function animateRig(rig, a, dt) {
   a.blinkT = (a.blinkT ?? 2) - dt;
   if (a.blinkT < 0) a.blinkT = 2.4 + Math.random() * 3.5;
@@ -1633,30 +2235,62 @@ function animateRig(rig, a, dt) {
   const mode = a.mode || 'idle';
 
   if (a.moving) {
-    // Locomotion
-    const p = a.phase, s = Math.sin(p), c = Math.cos(p);
-    const stride = a.run ? 1.25 : 1;
-    rig.hips.position.y = 0.92 + Math.abs(Math.sin(p * 2)) * 0.026;
-    rig.legL.rotation.x = s * 0.5 * stride;
-    rig.legR.rotation.x = -s * 0.5 * stride;
-    rig.kneeL.rotation.x = Math.max(0, -Math.sin(p + 0.7)) * 0.95 * stride;
-    rig.kneeR.rotation.x = Math.max(0, -Math.sin(p + 0.7 + Math.PI)) * 0.95 * stride;
-    rig.footL.rotation.x = -s * 0.18; rig.footR.rotation.x = s * 0.18;
-    rig.armL.rotation.x = -s * 0.42 * stride; rig.armR.rotation.x = s * 0.42 * stride;
-    rig.armL.rotation.z = 0.06; rig.armR.rotation.z = -0.06;
-    rig.elbowL.rotation.x = -0.3 - Math.max(0, -s) * 0.4;
-    rig.elbowR.rotation.x = -0.3 - Math.max(0, s) * 0.4;
-    rig.hips.rotation.y = s * 0.09;
-    rig.torso.rotation.y = -s * 0.07;
-    rig.torso.rotation.z = c * 0.02;
-    rig.body.rotation.z = s * 0.015;
+    // Biomechanical Gait Locomotion Cycle
+    const p = a.phase;
+    const s = Math.sin(p);
+    const c = Math.cos(p);
+    const stride = a.run ? 1.25 : (a.stride ?? 1.0);
+    const lean = a.forwardLean ?? 0.06;
+    const bounceAmp = a.bounce ?? 0.024;
+    const swayAmp = a.hipSway ?? 0.018;
+    const armSwing = a.armSwing ?? 0.42;
+
+    // 1. Center of Gravity & Lateral Weight Transfer (Midstance peak bounce)
+    rig.hips.position.y = 0.92 + Math.abs(Math.sin(p * 2)) * bounceAmp;
+    rig.hips.position.x += (s * swayAmp - rig.hips.position.x) * damp;
+
+    // 2. Pelvic List (Roll) & Pelvic Rotation (Yaw)
+    rig.hips.rotation.z = -c * 0.038;
+    rig.hips.rotation.y = s * 0.11;
+
+    // 3. Counter Torso Rotation & Spine Compensation
+    rig.torso.rotation.x = lean;
+    rig.torso.rotation.y = -s * 0.085;
+    rig.torso.rotation.z = c * 0.028;
+
+    // 4. Legs: Hip, Knee, and Ankle Articulation
+    // Left Leg
+    rig.legL.rotation.x = s * 0.54 * stride;
+    rig.kneeL.rotation.x = Math.max(0, -Math.sin(p + 0.65)) * 1.05 * stride;
+    rig.footL.rotation.x = s > 0.2 ? -0.22 : (s < -0.35 ? 0.32 : 0);
+
+    // Right Leg (opposite phase)
+    rig.legR.rotation.x = -s * 0.54 * stride;
+    rig.kneeR.rotation.x = Math.max(0, -Math.sin(p + 0.65 + Math.PI)) * 1.05 * stride;
+    rig.footR.rotation.x = s < -0.2 ? -0.22 : (s > 0.35 ? 0.32 : 0);
+
+    // 5. Arms: Pendulum Swing with Forearm Lag & Elbow Flexion
+    rig.armL.rotation.x = -s * armSwing * stride;
+    rig.armR.rotation.x = s * armSwing * stride;
+    rig.armL.rotation.z = 0.07;
+    rig.armR.rotation.z = -0.07;
+
+    rig.elbowL.rotation.x = -0.22 - Math.max(0, -s) * 0.48;
+    rig.elbowR.rotation.x = -0.22 - Math.max(0, s) * 0.48;
+
+    // 6. Centrifugal Banking when turning
+    const bank = a.banking ?? 0;
+    rig.body.rotation.z += (bank - rig.body.rotation.z) * damp;
+    rig.body.rotation.x = 0;
   } else if (mode === 'sit_desk') {
     // Seated Desk Pose (Classroom study / note writing)
     rig.hips.position.y += (0.48 - rig.hips.position.y) * damp;
+    rig.hips.position.x += (0 - rig.hips.position.x) * damp;
+    rig.body.rotation.z += (0 - rig.body.rotation.z) * damp;
     lerpTo(rig.legL, 'x', -1.57); lerpTo(rig.legR, 'x', -1.57);
     lerpTo(rig.kneeL, 'x', 1.57); lerpTo(rig.kneeR, 'x', 1.57);
     lerpTo(rig.footL, 'x', 0); lerpTo(rig.footR, 'x', 0);
-    lerpTo(rig.torso, 'x', 0.08); lerpTo(rig.torso, 'y', 0);
+    lerpTo(rig.torso, 'x', 0.08); lerpTo(rig.torso, 'y', 0); lerpTo(rig.torso, 'z', 0);
     lerpTo(rig.armL, 'x', -0.55); lerpTo(rig.armL, 'z', 0.22);
     lerpTo(rig.elbowL, 'x', -0.9);
     const write = Math.sin(a.idleT * 6.0) * 0.05;
@@ -1666,6 +2300,8 @@ function animateRig(rig, a, dt) {
   } else if (mode === 'teach_lecture') {
     // Teacher podium lecturing pose
     rig.hips.position.y += (0.92 - rig.hips.position.y) * damp;
+    rig.hips.position.x += (0 - rig.hips.position.x) * damp;
+    rig.body.rotation.z += (0 - rig.body.rotation.z) * damp;
     for (const j of ['legL', 'legR', 'kneeL', 'kneeR', 'footL', 'footR']) lerpTo(rig[j], 'x', 0);
     lerpTo(rig.armL, 'x', -0.5); lerpTo(rig.elbowL, 'x', -0.7);
     const swing = Math.sin(a.idleT * 1.8) * 0.35;
@@ -1675,6 +2311,8 @@ function animateRig(rig, a, dt) {
   } else if (mode === 'sit_eat') {
     // Seated Dining / Eating Pose
     rig.hips.position.y += (0.48 - rig.hips.position.y) * damp;
+    rig.hips.position.x += (0 - rig.hips.position.x) * damp;
+    rig.body.rotation.z += (0 - rig.body.rotation.z) * damp;
     lerpTo(rig.legL, 'x', -1.57); lerpTo(rig.legR, 'x', -1.57);
     lerpTo(rig.kneeL, 'x', 1.57); lerpTo(rig.kneeR, 'x', 1.57);
     lerpTo(rig.armL, 'x', -0.4); lerpTo(rig.elbowL, 'x', -0.8);
@@ -1685,32 +2323,42 @@ function animateRig(rig, a, dt) {
   } else if (mode === 'sit_read') {
     // Library Book Reading Pose
     rig.hips.position.y += (0.48 - rig.hips.position.y) * damp;
+    rig.hips.position.x += (0 - rig.hips.position.x) * damp;
+    rig.body.rotation.z += (0 - rig.body.rotation.z) * damp;
     lerpTo(rig.legL, 'x', -1.57); lerpTo(rig.legR, 'x', -1.57);
     lerpTo(rig.kneeL, 'x', 1.57); lerpTo(rig.kneeR, 'x', 1.57);
-    lerpTo(rig.torso, 'x', 0.12);
+    lerpTo(rig.torso, 'x', 0.12); lerpTo(rig.torso, 'y', 0); lerpTo(rig.torso, 'z', 0);
     lerpTo(rig.armL, 'x', -0.45); lerpTo(rig.armR, 'x', -0.45);
     lerpTo(rig.elbowL, 'x', -1.0); lerpTo(rig.elbowR, 'x', -1.0);
-    lerpTo(rig.head, 'x', 0.35); // Look down at book
+    lerpTo(rig.head, 'x', 0.35);
   } else if (mode === 'sport_drill') {
     // Athletic Court / Field Practice
     rig.hips.position.y += (0.85 - rig.hips.position.y) * damp;
+    rig.hips.position.x += (0 - rig.hips.position.x) * damp;
+    rig.body.rotation.z += (0 - rig.body.rotation.z) * damp;
     lerpTo(rig.legL, 'x', -0.2); lerpTo(rig.legR, 'x', 0.2);
     lerpTo(rig.kneeL, 'x', 0.4); lerpTo(rig.kneeR, 'x', 0.4);
     const dribble = Math.sin(a.idleT * 8.0) * 0.35;
     lerpTo(rig.armR, 'x', -0.3 + dribble); lerpTo(rig.elbowR, 'x', -0.7 + dribble);
     lerpTo(rig.armL, 'x', -0.2); lerpTo(rig.elbowL, 'x', -0.4);
   } else {
-    // Default Idle
+    // Default Natural Human Idle (Breathing, Posture Shifts & Subtle Sway)
     for (const j of ['legL', 'legR', 'kneeL', 'kneeR', 'armL', 'armR', 'footL', 'footR']) lerpTo(rig[j], 'x', 0);
     lerpTo(rig.elbowL, 'x', -0.16); lerpTo(rig.elbowR, 'x', -0.16);
     lerpTo(rig.torso, 'x', 0); lerpTo(rig.torso, 'y', 0); lerpTo(rig.hips, 'y', 0);
-    const breathe = Math.sin(a.idleT * 1.5) * 0.008;
+    rig.body.rotation.z += (0 - rig.body.rotation.z) * damp;
+
+    // Natural Respiration (Breathing cycle)
+    const breathe = Math.sin(a.idleT * 1.4) * 0.007;
     rig.hips.position.y += (0.92 + breathe - rig.hips.position.y) * damp;
-    const shift = Math.sin(a.idleT * 0.42);
-    rig.hips.rotation.z += (shift * 0.035 - rig.hips.rotation.z) * damp;
-    rig.torso.rotation.z += (-shift * 0.025 - rig.torso.rotation.z) * damp;
-    rig.armL.rotation.z += (0.08 + shift * 0.02 - rig.armL.rotation.z) * damp;
-    rig.armR.rotation.z += (-0.08 + shift * 0.02 - rig.armR.rotation.z) * damp;
+
+    // Natural Weight Shifting between feet every 5-7s
+    const weightShift = Math.sin(a.idleT * 0.38);
+    rig.hips.position.x += (weightShift * 0.022 - rig.hips.position.x) * damp;
+    rig.hips.rotation.z += (weightShift * 0.032 - rig.hips.rotation.z) * damp;
+    rig.torso.rotation.z += (-weightShift * 0.024 - rig.torso.rotation.z) * damp;
+    rig.armL.rotation.z += (0.08 + weightShift * 0.02 - rig.armL.rotation.z) * damp;
+    rig.armR.rotation.z += (-0.08 + weightShift * 0.02 - rig.armR.rotation.z) * damp;
 
     if (a.talk) {
       const g = Math.sin(a.idleT * 3.1);
@@ -1721,10 +2369,10 @@ function animateRig(rig, a, dt) {
   }
 
   if (mode !== 'sit_read') {
-    const wantY = a.lookAt ?? Math.sin(a.idleT * 0.5) * 0.22;
-    const wantX = a.lookPitch ?? 0;
-    rig.head.rotation.y += (Math.max(-1.1, Math.min(1.1, wantY)) - rig.head.rotation.y) * Math.min(1, dt * 5);
-    rig.head.rotation.x += (Math.max(-0.5, Math.min(0.5, wantX)) - rig.head.rotation.x) * Math.min(1, dt * 5);
+    const wantY = a.lookAt ?? Math.sin(a.idleT * 0.45) * 0.18;
+    const wantX = a.lookPitch ?? (Math.sin(a.idleT * 0.3) * 0.05);
+    rig.head.rotation.y += (Math.max(-1.1, Math.min(1.1, wantY)) - rig.head.rotation.y) * Math.min(1, dt * 5.5);
+    rig.head.rotation.x += (Math.max(-0.5, Math.min(0.5, wantX)) - rig.head.rotation.x) * Math.min(1, dt * 5.5);
   }
 }
 
@@ -1774,36 +2422,86 @@ function soc(name) {
 function saveSocial() { save('cote3dSocial', social); }
 const MOODS = ['content', 'neutral', 'neutral', 'tired', 'irritated', 'cheerful'];
 
+export function getStudentArchetype(traits) {
+  const { intelligence = 0.5, athleticism = 0.5, social = 0.5, discipline = 0.5, curiosity = 0.5 } = traits || {};
+  if (intelligence >= 0.85 || (intelligence >= 0.8 && discipline >= 0.8)) return 'Academic / Nerdy';
+  if (athleticism >= 0.85) return 'Sports Athlete';
+  if (social >= 0.85) return 'Social Butterfly';
+  if (discipline <= 0.35 && social >= 0.6) return 'Slacker / Casual';
+  if (intelligence >= 0.75 && social >= 0.75) return 'Class Leader';
+  return 'Balanced Student';
+}
+
 function createStudentNPC(id, name, persona, traits, assignedSeat, cfg) {
   const rig = makeRig(cfg);
-  const startLoc = LOC[cfg.spawnLoc || 'gate'].c;
-  const s = findFreeSpot(startLoc[0] + (Math.random() - 0.5) * 4, startLoc[1] + (Math.random() - 0.5) * 4, 0.5);
+  const startLoc = LOC[cfg.spawnLoc || 'gate']?.c || [0, 0];
+  const s = findFreeSpot(startLoc[0] + (Math.random() - 0.5) * 3, startLoc[1] + (Math.random() - 0.5) * 3, 0.5);
   rig.root.position.set(s.x, 0, s.z);
   rig.root.rotation.y = Math.PI;
   scene.add(rig.root);
 
   const label = makeLabel(name, s.x, 2.05, s.z, 0xffffff, 1.4);
 
+  // Compute individual lateral lane offset for pathway walking (-0.6m to +0.6m)
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) & 0xffffffff;
+  const laneOffset = ((Math.abs(hash) % 5) - 2) * 0.32;
+
+  const GAIT_PROFILES = {
+    kouenji:   { forwardLean: -0.03, stride: 1.05, armSwing: 0.38, bounce: 0.020, hipSway: 0.024 },
+    sudou:     { forwardLean: 0.12,  stride: 1.25, armSwing: 0.55, bounce: 0.032, hipSway: 0.018 },
+    horikita:  { forwardLean: 0.04,  stride: 0.95, armSwing: 0.36, bounce: 0.020, hipSway: 0.015 },
+    kushida:   { forwardLean: 0.06,  stride: 1.02, armSwing: 0.44, bounce: 0.030, hipSway: 0.022 },
+    chabashira:{ forwardLean: 0.03,  stride: 1.05, armSwing: 0.35, bounce: 0.018, hipSway: 0.014 },
+    sakura:    { forwardLean: 0.05,  stride: 0.88, armSwing: 0.28, bounce: 0.018, hipSway: 0.012 },
+    hirata:    { forwardLean: 0.05,  stride: 1.08, armSwing: 0.42, bounce: 0.022, hipSway: 0.016 },
+    karuizawa: { forwardLean: 0.05,  stride: 0.96, armSwing: 0.38, bounce: 0.024, hipSway: 0.025 },
+    yukimura:  { forwardLean: 0.06,  stride: 0.94, armSwing: 0.34, bounce: 0.018, hipSway: 0.012 },
+    ike:       { forwardLean: 0.08,  stride: 1.08, armSwing: 0.48, bounce: 0.026, hipSway: 0.020 },
+    yamauchi:  { forwardLean: 0.07,  stride: 1.04, armSwing: 0.46, bounce: 0.025, hipSway: 0.022 }
+  };
+  const gait = GAIT_PROFILES[id] || { forwardLean: 0.06, stride: 1.0, armSwing: 0.42, bounce: 0.024, hipSway: 0.018 };
+
+  const npcTraits = {
+    intelligence: traits.intelligence ?? 0.5,
+    athleticism: traits.athleticism ?? 0.5,
+    social: traits.social ?? 0.5,
+    discipline: traits.discipline ?? 0.5,
+    curiosity: traits.curiosity ?? 0.5
+  };
+
   const npc = {
-    id, name, persona, traits,
+    id, name, persona, traits: npcTraits,
+    archetype: getStudentArchetype(npcTraits),
     role: cfg.role || 'student',
     assignedSeat,
     preferredActivities: cfg.preferredActivities || ['LIBRARY', 'CAFETERIA'],
     cfg, rig, label,
     currentSpot: cfg.spawnLoc || 'gate',
+    spawnLoc: cfg.spawnLoc || 'gate',
     targetSpotId: null,
     targetSpot: null,
+    laneOffset,
+    curSpeed: 0,
     // State machine
-    state: 'SPAWN',
+    state: 'ARRIVING_AT_SCHOOL',
     currentActivity: 'ARRIVING_AT_SCHOOL',
-    activityReason: 'Arriving on the morning school bus.',
+    activityReason: 'Engaged in morning routine prior to homeroom.',
     path: [],
     pathI: 0,
+    routeId: 'ROUTE_NONE',
+    candidateRoutesCount: 1,
+    activeRouteNodes: [],
     speed: cfg.speed ?? 2.4,
     facing: Math.PI,
-    anim: { moving: false, phase: 0, talk: false, idleT: Math.random() * 6, blinkT: Math.random() * 4, lookAt: null, run: false, mode: 'idle' },
+    anim: {
+      moving: false, phase: 0, talk: false, idleT: Math.random() * 6, blinkT: Math.random() * 4,
+      lookAt: null, run: false, mode: 'idle', banking: 0,
+      ...gait
+    },
     _stuckTime: 0, _skips: 0,
     wantsTalk: false, waitUntil: 0, bubble: null, bubbleUntil: 0, chatWith: null,
+    userData: { isNPC: true, npcId: id, canTalk: true, name },
     lines: cfg.lines || {
       greet: ['...Ayanokouji-kun.', 'Hello.'],
       idle: ['Class 1-D...', 'The campus is huge.'],
@@ -1811,18 +2509,23 @@ function createStudentNPC(id, name, persona, traits, assignedSeat, cfg) {
     }
   };
 
+  rig.root.userData = { isNPC: true, npcId: id, canTalk: true, npc };
+  rig.root.traverse(child => {
+    if (child.isMesh) child.userData = { isNPC: true, npcId: id, canTalk: true, npc };
+  });
+
   npcs.push(npc);
   return npc;
 }
 
-// 1. Named Class 1-D Main Cast
+// 1. Named Class 1-D Main Cast with Diverse Morning Spawn Locations
 createStudentNPC('horikita', 'Horikita',
   'Horikita Suzune — reserved, direct, serious, determined to reach Class A. Quietly observant, dry warmth.',
   { intelligence: 0.98, discipline: 0.95, athleticism: 0.60, social: 0.15, curiosity: 0.85 },
   'CLASS_1D_SEAT_13', // Center desk beside Ayanokouji (Seat 14)
   {
     hair: 0x15151f, hairStyle: 'long', gender: 'f', skin: 0xf3d0b3, tie: 0x8a2b3a, height: 0.97,
-    spawnLoc: 'gate', speed: 2.4, preferredActivities: ['LIBRARY', 'STUDY', 'COURTYARD'],
+    spawnLoc: 'dorm', speed: 2.4, preferredActivities: ['LIBRARY', 'STUDY', 'COURTYARD'],
     lines: {
       greet: ['...Ayanokouji-kun.', 'Did you need something?', 'You are here too.'],
       idle: ['This reading is poorly reasoned...', 'Class D can still reach Class A.', 'A quiet corner is preferable.'],
@@ -1837,7 +2540,7 @@ createStudentNPC('kushida', 'Kushida',
   'CLASS_1D_SEAT_08',
   {
     hair: 0x22305a, hairStyle: 'medium', gender: 'f', skin: 0xf7d9bd, tie: 0x8a2b3a, height: 0.95,
-    spawnLoc: 'gate', speed: 2.5, preferredActivities: ['PALETTE_CAFE', 'KEYAKI_MALL', 'CAFETERIA', 'COURTYARD'],
+    spawnLoc: 'courtyard', speed: 2.5, preferredActivities: ['PALETTE_CAFE', 'KEYAKI_MALL', 'CAFETERIA', 'COURTYARD'],
     lines: {
       greet: ['Ayanokouji-kun! Good morning!', 'Hey hey! Over here!'],
       idle: ['Everyone in Class D is so unique!', 'Let\'s all get along!'],
@@ -1852,7 +2555,7 @@ createStudentNPC('sudou', 'Sudou',
   'CLASS_1D_SEAT_03',
   {
     hair: 0x9b2618, hairStyle: 'spiky', gender: 'm', skin: 0xecc39c, tie: 0x2b4a8a, height: 1.06,
-    spawnLoc: 'gate', speed: 2.9, preferredActivities: ['GYMNASIUM', 'SPORTS_FIELD', 'AQUATIC_CENTER', 'CAFETERIA'],
+    spawnLoc: 'field', speed: 2.9, preferredActivities: ['GYMNASIUM', 'SPORTS_FIELD', 'AQUATIC_CENTER', 'CAFETERIA'],
     lines: {
       greet: ['Yo, Ayanokouji.', 'Sup.'],
       idle: ['I need to hit the gym today.', 'Basketball practice starts after class.'],
@@ -1867,7 +2570,7 @@ createStudentNPC('kouenji', 'Kouenji',
   'CLASS_1D_SEAT_25', // Window back corner
   {
     hair: 0xd9b44a, hairStyle: 'slick', gender: 'm', skin: 0xf1c9a5, tie: 0x2b4a8a, height: 1.05,
-    spawnLoc: 'gate', speed: 2.2, preferredActivities: ['PALETTE_CAFE', 'COURTYARD', 'SIV_STORE', 'DORMITORY', 'SEASIDE'],
+    spawnLoc: 'cafe', speed: 2.0, preferredActivities: ['PALETTE_CAFE', 'COURTYARD', 'SIV_STORE', 'DORMITORY', 'SEASIDE'],
     lines: {
       greet: ['Ah — an ordinary student greets perfection.', 'Hmph.'],
       idle: ['Beauty is an immense responsibility.', 'School rules are for the mundane.'],
@@ -1891,20 +2594,20 @@ createStudentNPC('chabashira', 'Chabashira',
   }
 );
 
-// 2. Additional Class 1-D Classmate Cohort
+// 2. Additional Class 1-D Classmate Cohort with Distinct Origins
 const COHORT = [
-  { id: 'hirata', name: 'Hirata', traits: { intelligence: 0.82, discipline: 0.90, athleticism: 0.85, social: 0.92 }, seat: 'CLASS_1D_SEAT_11', act: ['CAFETERIA', 'COURTYARD', 'SPORTS_FIELD'], hair: 0x6b4f3b, hairStyle: 'medium', gender: 'm' },
-  { id: 'karuizawa', name: 'Karuizawa', traits: { intelligence: 0.55, discipline: 0.50, athleticism: 0.40, social: 0.95 }, seat: 'CLASS_1D_SEAT_17', act: ['KEYAKI_MALL', 'PALETTE_CAFE'], hair: 0xe0a96d, hairStyle: 'long', gender: 'f' },
-  { id: 'yukimura', name: 'Yukimura', traits: { intelligence: 0.94, discipline: 0.92, athleticism: 0.30, social: 0.40 }, seat: 'CLASS_1D_SEAT_06', act: ['LIBRARY', 'STUDY'], hair: 0x1f2937, hairStyle: 'medium', gender: 'm' },
-  { id: 'sakura', name: 'Sakura', traits: { intelligence: 0.70, discipline: 0.80, athleticism: 0.30, social: 0.20 }, seat: 'CLASS_1D_SEAT_22', act: ['SIV_STORE', 'COURTYARD'], hair: 0xf472b6, hairStyle: 'long', gender: 'f' },
-  { id: 'ike', name: 'Ike', traits: { intelligence: 0.40, discipline: 0.35, athleticism: 0.65, social: 0.80 }, seat: 'CLASS_1D_SEAT_02', act: ['CAFETERIA', 'KEYAKI_MALL'], hair: 0x854d0e, hairStyle: 'spiky', gender: 'm' },
-  { id: 'yamauchi', name: 'Yamauchi', traits: { intelligence: 0.38, discipline: 0.30, athleticism: 0.60, social: 0.78 }, seat: 'CLASS_1D_SEAT_04', act: ['CAFETERIA', 'COURTYARD'], hair: 0x475569, hairStyle: 'spiky', gender: 'm' }
+  { id: 'hirata', name: 'Hirata', traits: { intelligence: 0.82, discipline: 0.90, athleticism: 0.85, social: 0.92, curiosity: 0.75 }, seat: 'CLASS_1D_SEAT_11', act: ['CAFETERIA', 'COURTYARD', 'SPORTS_FIELD'], hair: 0x6b4f3b, hairStyle: 'medium', gender: 'm', spawn: 'courtyard', speed: 2.5 },
+  { id: 'karuizawa', name: 'Karuizawa', traits: { intelligence: 0.55, discipline: 0.50, athleticism: 0.40, social: 0.95, curiosity: 0.70 }, seat: 'CLASS_1D_SEAT_17', act: ['KEYAKI_MALL', 'PALETTE_CAFE'], hair: 0xe0a96d, hairStyle: 'long', gender: 'f', spawn: 'store', speed: 2.2 },
+  { id: 'yukimura', name: 'Yukimura', traits: { intelligence: 0.94, discipline: 0.92, athleticism: 0.30, social: 0.40, curiosity: 0.88 }, seat: 'CLASS_1D_SEAT_06', act: ['LIBRARY', 'STUDY'], hair: 0x1f2937, hairStyle: 'medium', gender: 'm', spawn: 'library', speed: 2.3 },
+  { id: 'sakura', name: 'Sakura', traits: { intelligence: 0.70, discipline: 0.80, athleticism: 0.30, social: 0.20, curiosity: 0.82 }, seat: 'CLASS_1D_SEAT_22', act: ['SIV_STORE', 'COURTYARD'], hair: 0xf472b6, hairStyle: 'long', gender: 'f', spawn: 'dorm', speed: 2.0 },
+  { id: 'ike', name: 'Ike', traits: { intelligence: 0.40, discipline: 0.35, athleticism: 0.65, social: 0.80, curiosity: 0.60 }, seat: 'CLASS_1D_SEAT_02', act: ['CAFETERIA', 'KEYAKI_MALL'], hair: 0x854d0e, hairStyle: 'spiky', gender: 'm', spawn: 'cafeteria', speed: 2.3 },
+  { id: 'yamauchi', name: 'Yamauchi', traits: { intelligence: 0.38, discipline: 0.30, athleticism: 0.60, social: 0.78, curiosity: 0.55 }, seat: 'CLASS_1D_SEAT_04', act: ['CAFETERIA', 'COURTYARD'], hair: 0x475569, hairStyle: 'spiky', gender: 'm', spawn: 'gate', speed: 2.2 }
 ];
 
 COHORT.forEach(c => {
   createStudentNPC(c.id, c.name, `${c.name} — Class 1-D Student.`, c.traits, c.seat, {
     hair: c.hair, hairStyle: c.hairStyle, gender: c.gender, skin: 0xf1c9a5, height: 0.98,
-    spawnLoc: 'gate', speed: 2.4, preferredActivities: c.act
+    spawnLoc: c.spawn, speed: c.speed, preferredActivities: c.act
   });
 });
 
@@ -1924,7 +2627,7 @@ function choosePersonalityActivity(npc) {
   if (t.athleticism > 0.85 && isRain) return 'gym';
   if (t.athleticism > 0.85 && !isRain) return Math.random() < 0.6 ? 'gym' : 'field';
   if (t.social > 0.85) return pick(['cafe', 'mall', 'cafeteria', 'courtyard']);
-  if (t.discipline < 0.3) return pick(['cafe', 'dorm', 'courtyard', 'seaside']);
+  if (t.discipline < 0.35) return pick(['cafe', 'dorm', 'courtyard', 'seaside']);
   return pick(npc.preferredActivities.map(a => a.toLowerCase()).filter(a => LOC[a])) || 'library';
 }
 
@@ -1937,18 +2640,33 @@ function evaluateNPCPurpose(npc, evt) {
       return { loc: 'class1d', spotId: 'CLASS_1D_TEACHER', state: 'GOING_TO_CLASS' };
     }
     if (evt.activity === 'LUNCH' || evt.activity === 'BREAK') {
-      return { loc: 'council', spotId: null, state: 'GOING_TO_NEXT_ACTIVITY' };
+      return { loc: 'council', spotId: null, state: 'GOING_TO_ACTIVITY' };
+    }
+    if (evt.activity === 'ARRIVING_AT_SCHOOL') {
+      return { loc: 'hall', spotId: null, state: 'IDLE_AT_DESTINATION' };
     }
     return { loc: 'hall', spotId: null, state: 'IDLE_AT_DESTINATION' };
   }
 
   // Student Decisions
   switch (evt.activity) {
-    case 'ARRIVING_AT_SCHOOL':
+    case 'ARRIVING_AT_SCHOOL': {
+      const morningLoc = npc.spawnLoc || 'courtyard';
+      npc.currentActivity = 'MORNING_LEISURE';
+      npc.activityReason = `Spending early morning free time at ${LOC[morningLoc]?.label || 'campus'}.`;
+      return { loc: morningLoc, spotId: null, state: 'ARRIVING_AT_SCHOOL' };
+    }
+
     case 'CLASS':
     case 'AFTERNOON_CLASS': {
-      const targetSpot = npc.assignedSeat || ReservationManager.findAvailableSpot('class1d', 'desk_seat')?.id;
-      ReservationManager.reserve(targetSpot, npc.id);
+      let targetSpot = npc.assignedSeat;
+      if (!targetSpot || !ReservationManager.reserve(targetSpot, npc.id)) {
+        const avail = ReservationManager.findAvailableSpot('class1d', 'desk_seat');
+        if (avail) {
+          ReservationManager.reserve(avail.id, npc.id);
+          targetSpot = avail.id;
+        }
+      }
       npc.targetSpotId = targetSpot;
       npc.currentActivity = 'ATTENDING_CLASS';
       npc.activityReason = 'Attending scheduled academic lecture in Class 1-D.';
@@ -1962,7 +2680,6 @@ function evaluateNPCPurpose(npc, evt) {
     }
 
     case 'LUNCH': {
-      // Find a cafeteria table seat
       ReservationManager.releaseAllForNPC(npc.id);
       const cafSpot = ReservationManager.findAvailableSpot('cafeteria', 'dining_seat');
       if (cafSpot) {
@@ -1986,7 +2703,7 @@ function evaluateNPCPurpose(npc, evt) {
       npc.targetSpotId = spotId;
       npc.currentActivity = `AFTER_SCHOOL_${chosenLoc.toUpperCase()}`;
       npc.activityReason = `Pursuing personality interest at the ${LOC[chosenLoc].label}.`;
-      const nextState = chosenLoc === 'library' ? 'GOING_TO_LIBRARY' : chosenLoc === 'gym' || chosenLoc === 'field' ? 'GOING_TO_SPORTS' : 'GOING_TO_SOCIAL';
+      const nextState = chosenLoc === 'library' ? 'GOING_TO_LIBRARY' : (chosenLoc === 'gym' || chosenLoc === 'field' || chosenLoc === 'aquatic') ? 'GOING_TO_SPORTS' : 'GOING_TO_ACTIVITY';
       return { loc: chosenLoc, spotId, state: nextState };
     }
 
@@ -1996,7 +2713,7 @@ function evaluateNPCPurpose(npc, evt) {
       npc.targetSpotId = null;
       npc.currentActivity = 'EVENING_FREE_TIME';
       npc.activityReason = `Spending free evening time at ${LOC[eveLoc].label}.`;
-      return { loc: eveLoc, spotId: null, state: 'GOING_TO_NEXT_ACTIVITY' };
+      return { loc: eveLoc, spotId: null, state: 'GOING_TO_ACTIVITY' };
     }
 
     case 'DORM_TIME':
@@ -2013,27 +2730,134 @@ function evaluateNPCPurpose(npc, evt) {
   }
 }
 
-// Route Calculation
+// Multi-Stage Route Calculation with Traffic-Aware Candidate Selection
 function routeNPCToSpot(npc, destLoc, spotId) {
-  const p = npc.rig.root.position;
-  const fromNode = LOC[npc.currentSpot]?.node || nearestNode(p.x, p.z);
-  const toNode = LOC[destLoc]?.node || 'hub';
-  const keys = navPath(fromNode, toNode);
-  const path = keys.map(k => ({ x: NAV_NODES[k][0], z: NAV_NODES[k][1] }));
+  // Clean up previous route traffic
+  if (npc.activeRouteNodes && npc.activeRouteNodes.length > 0) {
+    TrafficManager.removeRouteTraffic(npc.id, npc.activeRouteNodes);
+    npc.activeRouteNodes = [];
+  }
 
-  let finalTarget = { x: LOC[destLoc].c[0], z: LOC[destLoc].c[1] };
+  const p = npc.rig.root.position;
+  const fromNode = nearestNode(p.x, p.z);
+  const path = [];
+
+  let chosenTargetNode = 'hub';
+  let approachNode = null;
+  let doorCoord = null;
+  let interiorCoord = null;
+  let doorKey = null;
+
+  if (destLoc === 'class1d') {
+    doorKey = 'class1d';
+    // Approach variations based on departure slot or random hash
+    const approaches = ['classA', 'classSouthCorr', 'classNorthCorr'];
+    let h = 0;
+    for (let i = 0; i < (npc.id || '').length; i++) h = (h * 31 + npc.id.charCodeAt(i)) & 0xffffffff;
+    chosenTargetNode = approaches[Math.abs(h) % approaches.length];
+    approachNode = ['classApproach1', 'classApproach2', 'classApproach3'][Math.abs(h) % 3];
+    doorCoord = { x: -56.0, z: -20.0 };
+    interiorCoord = { x: -60.0, z: -20.0 };
+  } else if (destLoc === 'library') {
+    doorKey = 'library';
+    const approaches = ['libA', 'libNorthCorr', 'libSouthCorr'];
+    let h = 0;
+    for (let i = 0; i < (npc.id || '').length; i++) h = (h * 31 + npc.id.charCodeAt(i)) & 0xffffffff;
+    chosenTargetNode = approaches[Math.abs(h) % approaches.length];
+    approachNode = ['libApproach1', 'libApproach2', 'libApproach3'][Math.abs(h) % 3];
+    doorCoord = { x: -50.0, z: 22.0 };
+    interiorCoord = { x: -58.0, z: 22.0 };
+  } else if (destLoc === 'cafeteria') {
+    doorKey = 'cafeteria';
+    const approaches = ['cafA', 'cafSouthCorr', 'cafNorthCorr'];
+    let h = 0;
+    for (let i = 0; i < (npc.id || '').length; i++) h = (h * 31 + npc.id.charCodeAt(i)) & 0xffffffff;
+    chosenTargetNode = approaches[Math.abs(h) % approaches.length];
+    approachNode = ['cafApproach1', 'cafApproach2', 'cafApproach3'][Math.abs(h) % 3];
+    doorCoord = { x: 52.0, z: -20.0 };
+    interiorCoord = { x: 58.0, z: -20.0 };
+  } else if (destLoc === 'gym') {
+    doorKey = 'gym';
+    const approaches = ['gymA', 'gymNorthCorr', 'gymSouthCorr'];
+    let h = 0;
+    for (let i = 0; i < (npc.id || '').length; i++) h = (h * 31 + npc.id.charCodeAt(i)) & 0xffffffff;
+    chosenTargetNode = approaches[Math.abs(h) % approaches.length];
+    approachNode = ['gymApproach1', 'gymApproach2', 'gymApproach3'][Math.abs(h) % 3];
+    doorCoord = { x: 50.0, z: 22.0 };
+    interiorCoord = { x: 58.0, z: 22.0 };
+  } else if (destLoc === 'hall' || destLoc === 'council') {
+    chosenTargetNode = destLoc === 'council' ? 'councilA' : 'hallA';
+  } else {
+    chosenTargetNode = LOC[destLoc]?.node || 'hub';
+  }
+
+  // Dynamic Route Selection from RouteManager
+  const routeResult = RouteManager.selectBestRoute(fromNode, chosenTargetNode, npc);
+  const routeKeys = routeResult.route;
+  npc.routeId = routeResult.routeId;
+  npc.candidateRoutesCount = routeResult.allCandidates.length;
+  npc.activeRouteNodes = [...routeKeys];
+
+  // Register route traffic
+  TrafficManager.addRouteTraffic(npc.id, routeKeys);
+
+  // 1. Add corridor waypoints
+  routeKeys.forEach(k => {
+    if (NAV_NODES[k]) {
+      path.push({ x: NAV_NODES[k][0], z: NAV_NODES[k][1], stage: 'HALLWAY', nodeKey: k });
+    }
+  });
+
+  // 2. Add approach point
+  if (approachNode && NAV_NODES[approachNode]) {
+    path.push({ x: NAV_NODES[approachNode][0], z: NAV_NODES[approachNode][1], stage: 'DOOR_APPROACH', doorKey });
+  }
+
+  // 3. Add door threshold
+  if (doorCoord) {
+    path.push({ x: doorCoord.x, z: doorCoord.z, stage: 'DOOR', doorKey });
+  }
+
+  // 4. Add interior aisle
+  if (interiorCoord) {
+    path.push({ x: interiorCoord.x, z: interiorCoord.z, stage: 'INTERIOR_AISLE', doorKey });
+  }
+
+  // 5. Add final spot or interior target
   if (spotId && SPOTS[spotId]) {
     const s = SPOTS[spotId];
-    finalTarget = { x: s.x, z: s.z, facing: s.facing };
+    path.push({ x: s.x, z: s.z, facing: s.facing, stage: 'SEAT', isSeat: true });
     npc.targetSpot = s;
+  } else if (destLoc === 'class1d') {
+    path.push({ x: -62.0, z: -20.0, facing: Math.PI, stage: 'INTERIOR' });
+    npc.targetSpot = null;
+  } else if (destLoc === 'hall' || destLoc === 'council') {
+    path.push({ x: LOC[destLoc].c[0], z: LOC[destLoc].c[1], stage: 'INTERIOR' });
+    npc.targetSpot = null;
   } else {
-    const f = findFreeSpot(finalTarget.x + (Math.random() - 0.5) * 3, finalTarget.y + (Math.random() - 0.5) * 3, 0.5);
-    finalTarget = { x: f.x, z: f.z, facing: Math.PI };
+    const f = findFreeSpot(LOC[destLoc].c[0] + (Math.random() - 0.5) * 2, LOC[destLoc].c[1] + (Math.random() - 0.5) * 2, 0.5);
+    path.push({ x: f.x, z: f.z, facing: Math.PI, stage: 'DESTINATION' });
     npc.targetSpot = null;
   }
 
-  path.push(finalTarget);
-  npc.path = path;
+  // Clean and deduplicate consecutive identical waypoints
+  const cleanPath = [];
+  for (let i = 0; i < path.length; i++) {
+    if (i === 0 || Math.hypot(path[i].x - cleanPath[cleanPath.length - 1].x, path[i].z - cleanPath[cleanPath.length - 1].z) > 0.35) {
+      cleanPath.push(path[i]);
+    }
+  }
+
+  // Only apply mild lateral lane offset on wide open outdoor plaza nodes (never in narrow hallways or door approaches)
+  const laneOffset = (npc.laneOffset || 0) * 0.45;
+  for (let i = 0; i < cleanPath.length; i++) {
+    const wp = cleanPath[i];
+    if (wp.stage === 'PATH' && wp.nodeKey && (wp.nodeKey.startsWith('plaza') || wp.nodeKey.startsWith('court') || wp.nodeKey.startsWith('sea') || wp.nodeKey.startsWith('north'))) {
+      wp.x += laneOffset;
+    }
+  }
+
+  npc.path = cleanPath;
   npc.pathI = 0;
   npc._stuckTime = 0;
   npc._skips = 0;
@@ -2046,27 +2870,34 @@ function computeAvoidance(npc, vx, vz) {
   let ax = 0, az = 0;
   const p = npc.rig.root.position;
 
-  // Separate from other NPCs
+  // 1. Separate from other NPCs (Smooth local steering)
   for (const o of npcs) {
     if (o === npc) continue;
     const op = o.rig.root.position;
     const d = planar(p.x, p.z, op.x, op.z);
-    if (d > 0.01 && d < 1.3) {
-      const f = (1.3 - d) / 1.3;
+    if (d > 0.01 && d < 1.2) {
+      const f = (1.2 - d) / 1.2;
       ax += ((p.x - op.x) / d) * f * 1.5;
       az += ((p.z - op.z) / d) * f * 1.5;
     }
   }
 
-  // Separate from player
+  // 2. Separate from Player
   const pd = planar(p.x, p.z, camera.position.x, camera.position.z);
-  if (pd > 0.01 && pd < 1.6) {
-    const pf = (1.6 - pd) / 1.6;
-    ax += ((p.x - camera.position.x) / pd) * pf * 2.0;
-    az += ((p.z - camera.position.z) / pd) * pf * 2.0;
+  if (pd > 0.01 && pd < 1.5) {
+    const pf = (1.5 - pd) / 1.5;
+    ax += ((p.x - camera.position.x) / pd) * pf * 1.8;
+    az += ((p.z - camera.position.z) / pd) * pf * 1.8;
   }
 
   return { x: vx + ax, z: vz + az };
+}
+
+function shortestAngle(from, to) {
+  let diff = (to - from) % (Math.PI * 2);
+  if (diff > Math.PI) diff -= Math.PI * 2;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  return diff;
 }
 
 function stepNPCToTarget(npc, tx, tz, dt, isFinal = false) {
@@ -2074,48 +2905,88 @@ function stepNPCToTarget(npc, tx, tz, dt, isFinal = false) {
   let dx = tx - p.x, dz = tz - p.z;
   const dist = Math.hypot(dx, dz);
 
-  // Arrival threshold
-  const arrivalDist = isFinal ? 0.35 : 0.65;
-  if (dist < arrivalDist) {
-    npc.anim.moving = false;
+  // 1. Intermediate Waypoint Arrival: Seamlessly pass through corner waypoints without deceleration halting
+  if (!isFinal && dist < 0.95) {
     npc._stuckTime = 0;
-    return true;
+    return true; // Immediately proceed to next waypoint along corner
   }
 
-  dx /= dist; dz /= dist;
-  const steer = computeAvoidance(npc, dx, dz);
-  const sLen = Math.hypot(steer.x, steer.z) || 1;
-  const vx = (steer.x / sLen);
-  const vz = (steer.z / sLen);
-
-  const speed = isFinal && dist < 1.5 ? npc.speed * 0.6 : npc.speed;
-  const step = speed * dt;
-  const sx = p.x, sz = p.z;
-
-  const nx = p.x + vx * step, nz = p.z + vz * step;
-  if (!collidesAt(nx, nz, 0.45)) {
-    p.x = nx; p.z = nz;
-  } else if (!collidesAt(p.x + dx * step, p.z, 0.45)) {
-    p.x += dx * step;
-  } else if (!collidesAt(p.x, p.z + dz * step, 0.45)) {
-    p.z += dz * step;
-  }
-
-  const moved = Math.hypot(p.x - sx, p.z - sz) > step * 0.15;
-  if (moved) {
-    npc._stuckTime = 0;
-    npc.facing = Math.atan2(vx, vz);
-  } else {
-    npc._stuckTime = (npc._stuckTime || 0) + dt;
-    if (npc._stuckTime > 3.5) {
-      // Advance waypoint to prevent being trapped
+  // 2. Final Destination Arrival: Smoothly decelerate to a gentle stop
+  if (isFinal && dist < 0.32) {
+    npc.curSpeed = THREE.MathUtils.lerp(npc.curSpeed || 0, 0, dt * 7.5);
+    if ((npc.curSpeed || 0) < 0.08) {
+      npc.curSpeed = 0;
+      npc.anim.moving = false;
       npc._stuckTime = 0;
       return true;
     }
   }
 
-  npc.anim.moving = moved;
-  if (moved) npc.anim.phase += dt * speed * 2.5;
+  dx /= (dist || 1); dz /= (dist || 1);
+  const steer = computeAvoidance(npc, dx, dz);
+  const sLen = Math.hypot(steer.x, steer.z) || 1;
+  const vx = (steer.x / sLen);
+  const vz = (steer.z / sLen);
+
+  // 3. Smooth Heading Alignment & Turn Cornering Dynamics
+  const targetYaw = Math.atan2(dx, dz);
+  const angleDiff = shortestAngle(npc.facing, targetYaw);
+  const turnRate = Math.max(-6.5, Math.min(6.5, angleDiff * 7.5));
+  npc.facing += turnRate * dt;
+  npc.anim.banking = THREE.MathUtils.lerp(npc.anim.banking || 0, -turnRate * 0.035, dt * 8.0);
+
+  // Modulate speed gracefully around sharp corners
+  const turnFactor = Math.max(0.45, Math.cos(angleDiff * 0.7));
+  const baseTargetSpeed = isFinal && dist < 1.4 ? npc.speed * Math.max(0.35, dist / 1.4) : npc.speed;
+  const targetSpeed = baseTargetSpeed * turnFactor;
+  npc.curSpeed = THREE.MathUtils.lerp(npc.curSpeed || 0, targetSpeed, dt * 5.0);
+
+  const step = (npc.curSpeed || targetSpeed) * dt;
+  const sx = p.x, sz = p.z;
+  const rad = 0.26; // Safe clearance radius for corridor corners
+  let stepped = false;
+
+  // 4. Multi-Vector Step Resolution with Corner Wall Sliding
+  if (!collidesAt(p.x + vx * step, p.z + vz * step, rad)) {
+    p.x += vx * step; p.z += vz * step; stepped = true;
+  } else if (!collidesAt(p.x + dx * step, p.z + dz * step, rad)) {
+    p.x += dx * step; p.z += dz * step; stepped = true;
+  } else if (!collidesAt(p.x + dx * step, p.z, rad)) { // Slide along X
+    p.x += dx * step; stepped = true;
+  } else if (!collidesAt(p.x, p.z + dz * step, rad)) { // Slide along Z
+    p.z += dz * step; stepped = true;
+  } else {
+    // 30-degree deflection test for tight corridor vertices
+    const cos30 = 0.866, sin30 = 0.5;
+    const defX1 = dx * cos30 - dz * sin30, defZ1 = dx * sin30 + dz * cos30;
+    const defX2 = dx * cos30 + dz * sin30, defZ2 = -dx * sin30 + dz * cos30;
+    if (!collidesAt(p.x + defX1 * step, p.z + defZ1 * step, rad)) {
+      p.x += defX1 * step; p.z += defZ1 * step; stepped = true;
+    } else if (!collidesAt(p.x + defX2 * step, p.z + defZ2 * step, rad)) {
+      p.x += defX2 * step; p.z += defZ2 * step; stepped = true;
+    }
+  }
+
+  const moved = stepped && Math.hypot(p.x - sx, p.z - sz) > step * 0.12;
+  if (moved) {
+    npc._stuckTime = 0;
+    npc.anim.moving = true;
+    npc.anim.phase += dt * (npc.curSpeed || npc.speed) * 2.8;
+  } else {
+    npc.anim.moving = false; // Immediately disable leg/arm swing when stationary
+    npc._stuckTime = (npc._stuckTime || 0) + dt;
+
+    // Stuck Recovery: Evasive Reroute after 3.2s
+    if (npc._stuckTime > 3.2) {
+      npc._stuckTime = 0;
+      const near = nearestNode(p.x, p.z);
+      if (near && npc._destLoc) {
+        routeNPCToSpot(npc, npc._destLoc, npc._destSpotId);
+      }
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -2125,7 +2996,24 @@ function updateNPCBehavior(npc, dt, elapsed) {
   npc.label.position.set(p.x, 2.05, p.z);
   if (npc.bubble) npc.bubble.position.set(p.x, 2.45, p.z);
   npc.anim.idleT += dt;
-  npc.anim.talk = npc.speaking === true || activeNPC === npc;
+  npc.anim.talk = npc.speaking === true || activeNPC === npc || npc.state === 'TALKING';
+
+  // Staggered Departure Delay: wait before beginning departure
+  if (npc.departureDelay > 0) {
+    npc.departureDelay -= dt;
+    if (npc.departureDelay <= 0) {
+      npc.departureDelay = 0;
+      npc.isDeparted = true;
+      npc.state = npc._intendedState || 'GOING_TO_CLASS';
+      routeNPCToSpot(npc, npc._destLoc, npc._destSpotId);
+    } else {
+      // Waiting to depart — remain in natural standing idle animation
+      npc.anim.moving = false;
+      npc.curSpeed = 0;
+      animateRig(npc.rig, npc.anim, dt);
+      return;
+    }
+  }
 
   // Look-at behavior
   const dPlayer = planar(p.x, p.z, camera.position.x, camera.position.z);
@@ -2140,8 +3028,9 @@ function updateNPCBehavior(npc, dt, elapsed) {
   }
 
   // Active dialogue takes priority
-  if (activeNPC === npc) {
+  if (activeNPC === npc || npc.state === 'TALKING') {
     npc.anim.moving = false;
+    npc.curSpeed = 0;
     npc.anim.mode = 'idle';
     const dx = camera.position.x - p.x, dz = camera.position.z - p.z;
     npc.facing = Math.atan2(dx, dz);
@@ -2151,32 +3040,76 @@ function updateNPCBehavior(npc, dt, elapsed) {
     const wp = npc.path[npc.pathI];
     npc.anim.mode = 'idle';
 
+    // Corner Shortcut Smoothing: If close to waypoint and next waypoint is clear, cut corner smoothly
+    if (!isLast && npc.pathI + 1 < npc.path.length) {
+      const nextWp = npc.path[npc.pathI + 1];
+      const dToNext = Math.hypot(nextWp.x - p.x, nextWp.z - p.z);
+      const dToCur = Math.hypot(wp.x - p.x, wp.z - p.z);
+      if (dToNext < dToCur && dToCur < 1.6 && !collidesAt((p.x + nextWp.x) / 2, (p.z + nextWp.z) / 2, 0.28)) {
+        npc.pathI++;
+      }
+    }
+
+    // Doorway queueing and state progression
+    if (wp.stage === 'DOOR_APPROACH' && wp.doorKey) {
+      const canPass = DoorwayQueueManager.canEnterDoor(wp.doorKey, npc.id, clock.elapsedTime);
+      if (!canPass) {
+        // Yield at approach point
+        npc.state = npc._destLoc === 'class1d' ? 'WAITING_AT_CLASS_DOOR' : 'WAITING_AT_DOOR';
+        npc.curSpeed = 0;
+        npc.anim.moving = false;
+        animateRig(npc.rig, npc.anim, dt);
+        return;
+      }
+    } else if (wp.stage === 'DOOR') {
+      npc.state = npc._destLoc === 'class1d' ? 'ENTERING_CLASSROOM' : 'ENTERING_BUILDING';
+    } else if (wp.stage === 'INTERIOR_AISLE') {
+      if (wp.doorKey) DoorwayQueueManager.clearDoor(wp.doorKey, npc.id);
+      npc.state = npc._destLoc === 'class1d' ? 'GOING_TO_SEAT' : 'FINDING_SEAT';
+    } else if (wp.stage === 'SEAT') {
+      npc.state = 'GOING_TO_SEAT';
+    }
+
     if (stepNPCToTarget(npc, wp.x, wp.z, dt, isLast)) {
       npc.pathI++;
       if (npc.pathI >= npc.path.length) {
         // Arrived at destination!
         npc.anim.moving = false;
+        npc.curSpeed = 0;
         npc.path = [];
+        if (npc.activeRouteNodes && npc.activeRouteNodes.length > 0) {
+          TrafficManager.removeRouteTraffic(npc.id, npc.activeRouteNodes);
+          npc.activeRouteNodes = [];
+        }
         npc.currentSpot = npc._destLoc || npc.currentSpot;
         if (wp.facing !== undefined) npc.facing = wp.facing;
 
         // Transition to arrived activity state
-        if (npc.state === 'GOING_TO_CLASS') {
+        if (npc._destLoc === 'class1d') {
           npc.state = npc.role === 'teacher' ? 'TEACHING_CLASS' : 'IN_CLASS';
-        } else if (npc.state === 'GOING_TO_LUNCH') {
+          npc.anim.mode = npc.role === 'teacher' ? 'teach_lecture' : 'sit_desk';
+        } else if (npc._destLoc === 'cafeteria') {
           npc.state = 'EATING';
-        } else if (npc.state === 'GOING_TO_LIBRARY') {
+          npc.anim.mode = 'sit_eat';
+        } else if (npc._destLoc === 'library') {
           npc.state = 'STUDYING';
-        } else if (npc.state === 'GOING_TO_SPORTS') {
+          npc.anim.mode = 'sit_read';
+        } else if (npc._destLoc === 'gym' || npc._destLoc === 'field' || npc._destLoc === 'aquatic') {
           npc.state = 'PLAYING_SPORT';
+          npc.anim.mode = 'sport_drill';
+        } else if (npc._destLoc === 'cafe' || npc._destLoc === 'mall' || npc._destLoc === 'courtyard') {
+          npc.state = 'SOCIALIZING';
+          npc.anim.mode = 'idle';
         } else {
           npc.state = 'IDLE_AT_DESTINATION';
+          npc.anim.mode = 'idle';
         }
       }
     }
   } else {
     // Performing Current Activity
     npc.anim.moving = false;
+    npc.curSpeed = 0;
     if (npc.state === 'IN_CLASS') npc.anim.mode = 'sit_desk';
     else if (npc.state === 'TEACHING_CLASS') npc.anim.mode = 'teach_lecture';
     else if (npc.state === 'EATING') npc.anim.mode = 'sit_eat';
@@ -2189,11 +3122,12 @@ function updateNPCBehavior(npc, dt, elapsed) {
     }
   }
 
-  npc.rig.root.rotation.y += (npc.facing - npc.rig.root.rotation.y) * Math.min(1, dt * 9);
+  const angleDiff = shortestAngle(npc.rig.root.rotation.y, npc.facing);
+  npc.rig.root.rotation.y += angleDiff * Math.min(1, dt * 7.5);
   animateRig(npc.rig, npc.anim, dt);
 }
 
-// Master Schedule Tick Manager
+// Master Schedule Tick Manager with Staggered Departures
 let currentScheduleEvent = null;
 
 function updateSchoolScheduleSystem() {
@@ -2202,11 +3136,43 @@ function updateSchoolScheduleSystem() {
     currentScheduleEvent = evt;
     showToast(`🔔 ${hhmm()} — ${evt.label}`);
 
-    for (const npc of npcs) {
+    for (let i = 0; i < npcs.length; i++) {
+      const npc = npcs[i];
       const decision = evaluateNPCPurpose(npc, evt);
       npc._destLoc = decision.loc;
-      npc.state = decision.state;
-      routeNPCToSpot(npc, decision.loc, decision.spotId);
+      npc._destSpotId = decision.spotId;
+      npc._intendedState = decision.state;
+
+      // Natural Staggered Timing Across Different Times (0.5s to 38.0s)
+      if (npc.role === 'teacher') {
+        npc.departureDelay = 0.5; // Teacher prepares first
+      } else {
+        const disc = npc.traits?.discipline ?? 0.5;
+        if (npc.id === 'horikita') npc.departureDelay = 1.8;
+        else if (npc.id === 'yukimura') npc.departureDelay = 3.2;
+        else if (npc.id === 'hirata') npc.departureDelay = 5.0;
+        else if (npc.id === 'kushida') npc.departureDelay = 10.5;
+        else if (npc.id === 'sakura') npc.departureDelay = 14.0;
+        else if (npc.id === 'karuizawa') npc.departureDelay = 18.5;
+        else if (npc.id === 'sudou') npc.departureDelay = 24.0;
+        else if (npc.id === 'ike') npc.departureDelay = 28.0;
+        else if (npc.id === 'yamauchi') npc.departureDelay = 32.5;
+        else if (npc.id === 'kouenji') npc.departureDelay = 38.0;
+        else {
+          const baseSlot = (i % 8) * 4.0;
+          const personalityDelay = (1 - disc) * 12.0 + (i * 1.5) % 4.0;
+          npc.departureDelay = Math.max(1.0, baseSlot + personalityDelay);
+        }
+      }
+      npc.isDeparted = (npc.departureDelay <= 0.05);
+
+      if (!npc.isDeparted) {
+        npc.state = 'PREPARING_TO_LEAVE';
+        npc.anim.moving = false;
+      } else {
+        npc.state = decision.state;
+        routeNPCToSpot(npc, decision.loc, decision.spotId);
+      }
     }
     updateDebugRoster();
   }
@@ -2304,11 +3270,40 @@ const keys = {};
 let yaw = 0, pitch = -0.05, locked = false, dragging = false;
 const LOOK = 0.0025;
 
+function getClosestNPC(maxDist = 4.2) {
+  let closest = null, bestScore = maxDist;
+  const camDir = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  for (const n of npcs) {
+    if (!n.rig || !n.rig.root) continue;
+    const p = n.rig.root.position;
+    const d = planar(camera.position.x, camera.position.z, p.x, p.z);
+    if (d < maxDist) {
+      const toNPC = new THREE.Vector3(p.x - camera.position.x, 0, p.z - camera.position.z).normalize();
+      const dot = camDir.dot(toNPC);
+      const score = d - (dot > 0 ? dot * 0.75 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        closest = n;
+      }
+    }
+  }
+  return closest;
+}
+
 addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (e.code === 'KeyE' && nearNPC && dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') openDialogue(nearNPC);
+  if ((e.code === 'KeyE' || e.key === 'e' || e.key === 'E') && document.activeElement !== dlgInput) {
+    if (dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') {
+      const target = nearNPC || getClosestNPC(4.2);
+      if (target) {
+        openDialogue(target);
+        e.preventDefault();
+      }
+    }
+  }
   if (e.code === 'KeyV' && document.activeElement !== dlgInput) cycleWeather();
   if (e.code === 'KeyM' && document.activeElement !== dlgInput) toggleTTS();
+  if (e.code === 'KeyC' && document.activeElement !== dlgInput) toggleDebugColliders();
   if (e.code === 'F3') { toggleDebugHUD(); e.preventDefault(); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
@@ -2326,6 +3321,35 @@ document.addEventListener('pointerlockerror', () => locked = false);
 
 function applyLook(dx, dy) { yaw -= dx * LOOK; pitch = Math.max(-1.2, Math.min(1.2, pitch - dy * LOOK)); }
 document.addEventListener('mousemove', e => { if (camMode === 'free' && (locked || dragging)) applyLook(e.movementX || 0, e.movementY || 0); });
+
+// Raycasting to click directly on NPCs
+const _raycaster = new THREE.Raycaster();
+const _mouseVec = new THREE.Vector2();
+cv.addEventListener('click', e => {
+  if (camMode !== 'free' || locked) return;
+  const rect = cv.getBoundingClientRect();
+  _mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  _mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  _raycaster.setFromCamera(_mouseVec, camera);
+  const roots = npcs.map(n => n.rig?.root).filter(Boolean);
+  const hits = _raycaster.intersectObjects(roots, true);
+  if (hits.length > 0) {
+    for (const h of hits) {
+      let obj = h.object;
+      while (obj) {
+        if (obj.userData?.npc) {
+          const target = obj.userData.npc;
+          const dist = planar(camera.position.x, camera.position.z, target.rig.root.position.x, target.rig.root.position.z);
+          if (dist <= 4.5 && dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') {
+            openDialogue(target);
+            return;
+          }
+        }
+        obj = obj.parent;
+      }
+    }
+  }
+});
 
 // ---------- Player Movement & Collision ----------
 const R = 0.55;
@@ -2354,7 +3378,7 @@ function beginTalkCam(npc) {
   playerAvatar.root.visible = true;
   camMode = 'talk';
   crosshair.classList.add('hide');
-  if (document.pointerLockElement) document.exitPointerLock();
+  if (document.pointerLockElement) { try { document.exitPointerLock(); } catch {} }
   updateTalkFraming(npc);
   camLook.copy(camLookTarget);
 }
@@ -2370,13 +3394,24 @@ function endTalkCam() { camMode = 'return'; }
 
 // ---------- Proximity & Scene Readout ----------
 let nearNPC = null;
+if (promptEl) {
+  promptEl.onclick = () => {
+    const target = nearNPC || getClosestNPC(4.5);
+    if (target && dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') {
+      openDialogue(target);
+    }
+  };
+}
+
 function updateProximity() {
-  let closest = null, best = 3.6;
-  for (const n of npcs) { const d = planar(camera.position.x, camera.position.z, n.rig.root.position.x, n.rig.root.position.z); if (d < best) { best = d; closest = n; } }
-  nearNPC = closest;
+  nearNPC = getClosestNPC(4.0);
   const busy = dialogue.style.display === 'flex' || storyEl.style.display === 'flex' || camMode !== 'free';
-  if (nearNPC && !busy) { promptEl.style.display = 'block'; promptEl.innerHTML = `Press <b>E</b> to talk to <b>${nearNPC.name}</b> (${nearNPC.currentActivity})`; }
-  else promptEl.style.display = 'none';
+  if (nearNPC && !busy) {
+    promptEl.style.display = 'block';
+    promptEl.innerHTML = `Press <b>E</b> to talk to <b>${nearNPC.name}</b>`;
+  } else {
+    promptEl.style.display = 'none';
+  }
 }
 function updateSceneLabel() {
   let label = 'Campus Grounds', best = 24;
@@ -2443,6 +3478,7 @@ function animate() {
 
   for (const n of npcs) updateNPCBehavior(n, dt, elapsed);
   updateWeather(dt, elapsed);
+  updateDebugPathVisualizer();
 
   const evt = getCurrentScheduleEvent(clockMin);
   clockChip.textContent = `🕗 ${hhmm()} · Day ${gameDay} · ${evt.label}`;
@@ -2453,6 +3489,123 @@ function animate() {
   renderer.render(scene, camera);
 }
 
+// ---------- 3D Route Visualizer & Path Lines Group ----------
+const debugPathGroup = new THREE.Group();
+debugPathGroup.name = 'DebugPaths';
+scene.add(debugPathGroup);
+let debugPathsVisible = true; // Enabled by default for immediate developer visibility
+
+const NPC_ROUTE_COLORS = {
+  horikita:   0x38bdf8,
+  kushida:    0xf472b6,
+  sudou:      0xef4444,
+  kouenji:    0xf59e0b,
+  chabashira: 0xa855f7,
+  hirata:     0x10b981,
+  karuizawa:  0xfb7185,
+  yukimura:   0x6366f1,
+  sakura:     0xec4899,
+  ike:        0xeab308,
+  yamauchi:   0x64748b
+};
+
+export function toggleDebugPaths() {
+  debugPathsVisible = !debugPathsVisible;
+  debugPathGroup.clear();
+  const btn = $('dbg-toggle-paths');
+  if (btn) btn.textContent = debugPathsVisible ? '🛣️ Visual Paths: ON' : '🛣️ Visual Paths: OFF';
+  showToast(debugPathsVisible ? '🗺️ 3D Route Visualizer: ON (Showing multi-route paths)' : '🗺️ 3D Route Visualizer: OFF', 2500);
+}
+window.toggleDebugPaths = toggleDebugPaths;
+
+function updateDebugPathVisualizer() {
+  if (!debugPathsVisible) return;
+  debugPathGroup.clear();
+  for (const n of npcs) {
+    if (!n.path || n.path.length <= 1 || n.pathI >= n.path.length) continue;
+    const color = NPC_ROUTE_COLORS[n.id] || 0x38bdf8;
+    const points = [];
+    // Start from current NPC 3D position
+    points.push(new THREE.Vector3(n.rig.root.position.x, 0.45, n.rig.root.position.z));
+    for (let i = n.pathI || 0; i < n.path.length; i++) {
+      points.push(new THREE.Vector3(n.path[i].x, 0.45, n.path[i].z));
+    }
+    if (points.length >= 2) {
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({ color, linewidth: 3, transparent: true, opacity: 0.85 });
+      const line = new THREE.Line(geo, mat);
+      debugPathGroup.add(line);
+
+      // Waypoint destination nodes
+      points.forEach((pt, pi) => {
+        if (pi === 0) return;
+        const spGeo = new THREE.SphereGeometry(pi === points.length - 1 ? 0.24 : 0.12, 8, 6);
+        const spMat = new THREE.MeshBasicMaterial({ color });
+        const spMesh = new THREE.Mesh(spGeo, spMat);
+        spMesh.position.copy(pt);
+        debugPathGroup.add(spMesh);
+      });
+    }
+  }
+}
+
+// ---------- Automated Campus Navigation & Multi-Route Test Suite ----------
+export function testCampusNavigation() {
+  console.log('%c======================================================', 'color: #38bdf8; font-weight: bold;');
+  console.log('%c🚀 RUNNING CAMPUS NAVIGATION & MULTI-ROUTE TEST SUITE', 'color: #38bdf8; font-weight: bold;');
+  console.log('%c======================================================', 'color: #38bdf8; font-weight: bold;');
+
+  const testPairs = [
+    { name: 'School Entrance ➔ Classroom 1D', from: 'gateN', to: 'classDoor' },
+    { name: 'Classroom 1D ➔ Cafeteria', from: 'classDoor', to: 'cafDoor' },
+    { name: 'Cafeteria ➔ Memorial Library', from: 'cafDoor', to: 'libDoor' },
+    { name: 'Cafeteria ➔ Sports Field & Gym', from: 'cafDoor', to: 'gymDoor' },
+    { name: 'Memorial Library ➔ Classroom 1D', from: 'libDoor', to: 'classDoor' },
+    { name: 'Sports Field ➔ Classroom 1D', from: 'fieldW', to: 'classDoor' }
+  ];
+
+  let passedCount = 0;
+  const results = [];
+
+  testPairs.forEach(t => {
+    const candidates = RouteManager.findCandidateRoutes(t.from, t.to);
+    const reachable = candidates.length > 0 && candidates[0].length > 0;
+    const multiRoute = candidates.length >= 2;
+    const success = reachable && multiRoute;
+
+    if (success) passedCount++;
+
+    const res = {
+      test: t.name,
+      reachable,
+      candidateRoutes: candidates.length,
+      primaryPath: candidates[0]?.join(' ➔ ') || 'NONE',
+      alternatePath: candidates[1]?.join(' ➔ ') || 'NONE',
+      status: success ? 'PASSED' : reachable ? 'PASSED (Single route)' : 'FAILED'
+    };
+    results.push(res);
+
+    if (success) {
+      console.log(`%c[PATH TEST PASSED] %c${t.name} — ${candidates.length} distinct valid candidate routes discovered.`, 'color: #10b981; font-weight: bold;', 'color: #cbd5e1;');
+      console.log(`   Route A: ${candidates[0].join(' ➔ ')}`);
+      console.log(`   Route B: ${candidates[1].join(' ➔ ')}`);
+    } else if (reachable) {
+      console.warn(`[PATH TEST WARNING] ${t.name} — Reachable but only 1 candidate route found.`);
+    } else {
+      console.error(`[PATH TEST FAILED] ${t.name} — No valid route found from ${t.from} to ${t.to}!`);
+    }
+  });
+
+  console.log('%c======================================================', 'color: #38bdf8; font-weight: bold;');
+  console.log(`%c📊 RESULT: ${passedCount}/${testPairs.length} Route Tests Passed with Multi-Route Candidate Diversity.`, passedCount === testPairs.length ? 'color: #10b981; font-weight: bold;' : 'color: #f59e0b; font-weight: bold;');
+  console.log('%c======================================================', 'color: #38bdf8; font-weight: bold;');
+
+  showToast(`🧪 Test Suite: ${passedCount}/${testPairs.length} Routes Validated with Multi-Path Diversity`, 4000);
+  return results;
+}
+window.testCampusNavigation = testCampusNavigation;
+window.validateCampusNavigation = testCampusNavigation;
+
 // ---------- Debug Diagnostics HUD (F3) ----------
 function toggleDebugHUD() {
   if (debugPanel.classList.contains('active')) debugPanel.classList.remove('active');
@@ -2460,9 +3613,62 @@ function toggleDebugHUD() {
 }
 if ($('dbg-close')) $('dbg-close').onclick = () => debugPanel.classList.remove('active');
 
+// =========================================================================
+// JAVA SIMULATION BACKEND CONNECTOR / BRIDGE
+// =========================================================================
+export const JavaSimulationBridge = {
+  serverUrl: 'http://localhost:8080',
+  connected: false,
+  lastCheck: 0,
+
+  async checkServer() {
+    try {
+      const res = await fetch(`${this.serverUrl}/api/health`, { method: 'GET', mode: 'cors', cache: 'no-cache' });
+      if (res.ok) {
+        const wasConnected = this.connected;
+        this.connected = true;
+        if (!wasConnected) {
+          showToast('🟢 Connected to COTE Java Simulation Server (port 8080)', 3500);
+          updateDebugRoster();
+        }
+        return true;
+      }
+    } catch {
+      this.connected = false;
+    }
+    return false;
+  },
+
+  async fetchSimulationState() {
+    if (!this.connected) return null;
+    try {
+      const res = await fetch(`${this.serverUrl}/api/simulation`, { method: 'GET', mode: 'cors', cache: 'no-cache' });
+      if (res.ok) return await res.json();
+    } catch {
+      this.connected = false;
+    }
+    return null;
+  },
+
+  async setServerTime(hour) {
+    if (!this.connected) return;
+    try {
+      await fetch(`${this.serverUrl}/api/time?hour=${hour}`, { method: 'POST', mode: 'cors' });
+    } catch {}
+  }
+};
+window.JavaSimulationBridge = JavaSimulationBridge;
+
+// Check immediately on load and periodically every 5s
+JavaSimulationBridge.checkServer();
+setInterval(() => { JavaSimulationBridge.checkServer(); }, 5000);
+
 window.skipToTime = function(h) {
   clockMin = h * 60;
   currentScheduleEvent = null;
+  if (JavaSimulationBridge.connected) {
+    JavaSimulationBridge.setServerTime(h);
+  }
   updateSchoolScheduleSystem();
   showToast(`⏩ Time skipped to ${hhmm()}`, 3000);
 };
@@ -2470,13 +3676,30 @@ window.skipToTime = function(h) {
 function updateDebugRoster() {
   if (!dbgRosterList) return;
   dbgRosterList.innerHTML = '';
+
+  const headerRow = document.createElement('div');
+  headerRow.style.cssText = 'padding:6px 10px;margin-bottom:8px;background:rgba(255,255,255,0.04);border-radius:6px;display:flex;justify-content:space-between;align-items:center;border:1px solid rgba(255,255,255,0.08);';
+  headerRow.innerHTML = `
+    <span style="font-size:11px;font-weight:600;color:#cbd5e1;">Engine Source:</span>
+    ${JavaSimulationBridge.connected 
+      ? '<span style="color:#10b981;font-size:11px;font-weight:700;">🟢 Java Server (port 8080 Active)</span>'
+      : '<span style="color:#94a3b8;font-size:11px;">⚪ Local JS Engine (Standby for Java)</span>'}
+  `;
+  dbgRosterList.appendChild(headerRow);
+
   for (const n of npcs) {
     const row = document.createElement('div');
     row.className = 'dbg-npc-row';
+    const trafficCost = n.activeRouteNodes ? TrafficManager.getRouteTrafficCost(n.activeRouteNodes).toFixed(1) : '0.0';
+    const routeInfo = n.path && n.path.length > 0 ? `<b>${n.routeId}</b> [${n.pathI}/${n.path.length}] (alt: ${n.candidateRoutesCount || 1})` : 'Arrived / In Place';
     row.innerHTML = `
-      <div><span class="dbg-npc-name">${n.name}</span> (${n.role})</div>
+      <div style="display:flex;justify-content:space-between;">
+        <span class="dbg-npc-name">${n.name}</span>
+        <span style="color:#f59e0b;font-size:10px;">${n.archetype || 'Student'}</span>
+      </div>
       <div class="dbg-npc-state">State: <b>${n.state}</b> · Act: ${n.currentActivity}</div>
       <div class="dbg-npc-dest">Dest: ${LOC[n.currentSpot]?.label || n.currentSpot}${n.targetSpotId ? ` [${n.targetSpotId}]` : ''}</div>
+      <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Route: ${routeInfo} · Traffic: ${trafficCost}m</div>
     `;
     dbgRosterList.appendChild(row);
   }
@@ -2497,87 +3720,386 @@ function applyStats(changes) {
 }
 renderStats();
 
-// ---------- Dialogue & LLM Conversation ----------
+// ---------- Dialogue & LLM Conversation Engine ----------
+// ---------- Dynamic Dialogue & Real-Time LLM Engine (router.bynara.id / agnes-2.5-flash) ----------
 function npcSystemPrompt(npc) {
-  return `You are role-playing a single character in the world of "Classroom of the Elite" (Volume 1). The player is Ayanokouji Kiyotaka. Stay 100% in character.
+  return `You are ${npc.name} from the anime/novel "Classroom of the Elite".
+You are having a real, natural conversation with Ayanokouji Kiyotaka right now.
 
-CHARACTER: ${npc.name} (${npc.role})
-${npc.persona}
+YOUR CHARACTER:
+- Name: ${npc.name}
+- Role: ${npc.role}
+- Personality: ${npc.persona}
+- Current Time: ${hhmm()} (${currentScheduleEvent?.label || 'School Day'})
+- Current Location: ${LOC[npc.currentSpot]?.label || 'Campus'}
+- What you are doing: ${npc.activityReason || npc.currentActivity || 'attending school'}
 
-CURRENT ACTIVITY: Right now it is ${hhmm()} (${currentScheduleEvent?.label || 'School'}), you are at the ${LOC[npc.currentSpot]?.label || 'campus'} doing: ${npc.activityReason}.
+HOW TO RESPOND:
+1. Speak EXACTLY as your character would — use their unique voice, speech patterns, and personality.
+2. React naturally and specifically to what Ayanokouji just said. Never give a generic answer.
+3. If he says goodbye/bye/see you/later, reply with a natural in-character farewell.
+4. Keep your reply to 1-4 sentences of natural spoken dialogue.
+5. After your dialogue, on a NEW LINE, write a compact JSON block ONLY like this (no other text):
+{"s":{"trust":0,"love":0,"respect":0},"c":["reply option 1","reply option 2","reply option 3"]}
 
-RULES:
-- Reply SHORT and natural, like real spoken dialogue (1-4 sentences).
-- Reference your current activity or location naturally.
-- Small stat changes (-3..+3).
-
-Respond ONLY with valid JSON:
-{ "text": "...", "statChanges": {"trust":0,"love":0,"respect":0,"wisdom":0,"courage":0}, "choices": ["...","..."] }`;
+Where "s" has small stat shifts (-3 to +3) and "c" has 2-3 short natural reply suggestions Ayanokouji could say next.
+DO NOT put any text after the JSON block.`;
 }
 
-function openDialogue(npc) {
-  activeNPC = npc; convo = (memory[npc.name] || []).slice();
-  const s = soc(npc.name);
-  s.talks++; saveSocial();
-  dlgName.textContent = `${npc.name}  ·  ${LOC[npc.currentSpot]?.label || ''}  ·  ${npc.currentActivity}`;
-  dlgLog.innerHTML = ''; dlgChoices.innerHTML = '';
-  for (const m of convo) {
-    if (m.role === 'user' && m._hidden) continue;
-    if (m.role === 'user') addLine('me', 'You', m.parts[0].text);
-    else { try { const p = JSON.parse(m.parts[0].text); addLine('npc', npc.name, p.text); } catch {} }
+function generateProceduralNPCDialogue(npc, playerText, opening) {
+  const text = (playerText || '').trim().toLowerCase();
+  const id = npc.id || '';
+  const spot = LOC[npc.currentSpot]?.label || 'Campus';
+
+  if (opening) {
+    const greetings = {
+      horikita: '...Ayanokouji-kun. Class is about to start. Did you need something, or are you just wandering around?',
+      kushida: 'Ayanokouji-kun! Good morning! Isn\'t it exciting that we\'re all in Class D together? Let\'s make lots of friends!',
+      sudou: 'Yo, Ayanokouji! Basketball drills were intense this morning. You heading over to class?',
+      kouenji: 'Ah, an ordinary boy approaches perfection. What brings you into my presence today?',
+      chabashira: 'Ayanokouji. Tardiness will not be tolerated in this institution. Take your seat immediately.',
+      hirata: 'Good morning, Ayanokouji-kun! I\'m making sure everyone in Class D is ready for the day.',
+      karuizawa: 'Oh, Ayanokouji-kun? Don\'t make it look like we\'re whispering. What\'s up?',
+      yukimura: 'Ayanokouji. If you\'re not preparing for today\'s lecture, you\'re falling behind.',
+      sakura: 'U-um... Ayanokouji-kun... h-hello... Did you need something from me...?',
+      ike: 'Yooo, Ayanokouji! Did you see the 100,000 points?! What are you gonna buy first?!',
+      yamauchi: 'Heh! Ayanokouji! You\'re looking at the future mastermind of Class 1-D!'
+    };
+    return { text: greetings[id] || `Hey, Ayanokouji. Good to see you at the ${spot}.`, statChanges: { trust: 1 }, choices: ['Good morning.', 'What are you doing right now?', 'See you in class.'] };
   }
-  dialogue.style.display = 'flex';
-  beginTalkCam(npc);
-  if (!canTalk) { addLine('sys', '', 'Talking needs an API key — reload and start with a key.'); return; }
-  if (convo.length === 0) sendToNPC('[Ayanokouji walks up to you. Greet or react in character based on what you are doing.]', true);
-  else { addLine('sys', '', `— you approach ${npc.name} —`); sendToNPC('[Ayanokouji approaches you again.]', true); }
+  if (/(bye|goodbye|cya|see you|later|farewell|leaving|leave|gotta go)/i.test(text)) {
+    const farewells = {
+      horikita: '...Goodbye, Ayanokouji-kun. Make sure you are not late for homeroom.',
+      kushida: 'Aww, leaving already? See you in class! Bye-bye!',
+      sudou: 'Catch ya later! See you on the court or in class!',
+      kouenji: 'Farewell, ordinary boy. Try not to miss my radiant presence too much.',
+      chabashira: 'Proceed to your desk immediately. Class is beginning.',
+      hirata: 'See you in class! Have a great day!',
+      karuizawa: 'Yeah, whatever. Don\'t be late. See ya.',
+      yukimura: 'Good. Less idle chatter means more focus on our studies.',
+      sakura: 'B-bye, Ayanokouji-kun... take care!',
+      ike: 'Later, dude! Let\'s catch up at lunch!',
+      yamauchi: 'Peace out, Ayanokouji! The mastermind will see you in class!'
+    };
+    return { text: farewells[id] || 'See you later, Ayanokouji.', statChanges: { trust: 1 }, choices: ['See you.', 'Take care.', 'Have a good day.'] };
+  }
+  if (/^(hi|hello|hey|yo|sup|good morning|morning)/i.test(text)) {
+    const hellos = {
+      horikita: 'Good morning. Let us make sure today isn\'t wasted on pointless trivialities.',
+      kushida: 'Hey! Seeing a friendly face always brightens up my morning!',
+      sudou: 'Yo! Ready to tackle the day? Energy is everything!',
+      kouenji: 'Greetings. Few are fortunate enough to begin their day beholding such elegance.',
+      chabashira: 'Good morning. Do not let your guard down simply because the school seems relaxed.',
+      hirata: 'Good morning! Always good to see you, Ayanokouji-kun.',
+      karuizawa: 'Hey. Keep it casual, okay?',
+      yukimura: 'Morning. I trust you\'ve reviewed today\'s chapters.',
+      sakura: 'G-good morning... I hope you have a nice day...',
+      ike: 'What\'s up, my man! Living the high school dream!',
+      yamauchi: 'Yo! You\'re talking to a man with big plans!'
+    };
+    return { text: hellos[id] || `Hello, Ayanokouji.`, statChanges: { trust: 1 }, choices: ['How is your day?', 'What do you think of the S-System?', 'See you in class.'] };
+  }
+  const defaults = {
+    horikita: 'I see your point, Ayanokouji-kun. However, actions speak far louder than words in this environment.',
+    kushida: 'I totally get what you mean! It\'s really nice being able to talk openly with you like this.',
+    sudou: 'Yeah, I hear ya. As long as we keep pushing forward, nothing can stop us!',
+    kouenji: 'An amusing perspective from an ordinary observer. Do continue to observe my brilliance.',
+    chabashira: 'Bear that in mind. In this school, every word and action has consequences.',
+    hirata: 'I agree. Let\'s make sure we keep the harmony in our class.',
+    karuizawa: 'Hmm, I suppose. Just don\'t make a big deal out of it.',
+    yukimura: 'Logically speaking, you have a point. We must remain analytical.',
+    sakura: 'I-I understand... Thank you for explaining that to me, Ayanokouji-kun...',
+    ike: 'Totally agree, bro! We gotta stay on top of our game!',
+    yamauchi: 'Just as I calculated! You and me, we\'re on the exact same wavelength!'
+  };
+  return { text: defaults[id] || `I understand, Ayanokouji. Let's see how things develop for Class D.`, statChanges: { trust: 1 }, choices: ['Tell me more.', 'I agree.', 'See you in class.'] };
+}
+
+function parseNPCResponse(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+
+  // Strategy 1: Pure legacy JSON {"text":...,"statChanges":...,"choices":...}
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed.text === 'string' && parsed.text.length > 0) {
+        return { text: parsed.text, statChanges: parsed.statChanges || parsed.s || {}, choices: parsed.choices || parsed.c || [] };
+      }
+    } catch {}
+  }
+
+  // Strategy 2: New format — spoken text then compact JSON on a new line
+  const jsonLineMatch = trimmed.match(/^([\s\S]*?)\n(\{[^\n]+\})\s*$/);
+  if (jsonLineMatch) {
+    const spokenText = jsonLineMatch[1].trim();
+    if (spokenText.length > 0) {
+      let statChanges = {}, choices = [];
+      try { const meta = JSON.parse(jsonLineMatch[2]); statChanges = meta.s || meta.statChanges || {}; choices = meta.c || meta.choices || []; } catch {}
+      return { text: spokenText, statChanges, choices };
+    }
+  }
+
+  // Strategy 3: Any JSON block embedded in a longer response
+  const allBlocks = Array.from(trimmed.matchAll(/\{[^{}]*\}/g)).reverse();
+  for (const m of allBlocks) {
+    try {
+      const meta = JSON.parse(m[0]);
+      const spokenText = trimmed.replace(m[0], '').trim();
+      if (spokenText.length > 0) {
+        return { text: spokenText, statChanges: meta.s || meta.statChanges || {}, choices: meta.c || meta.choices || [] };
+      }
+    } catch {}
+  }
+
+  // Strategy 4: Pure plain-text dialogue from the model — use it directly
+  if (trimmed.length > 0) {
+    return { text: trimmed, statChanges: {}, choices: ['I see.', 'Tell me more.', 'I should get going.'] };
+  }
+
+  return null;
 }
 
 function addLine(kind, who, text, chips) {
-  const el = document.createElement('div'); el.className = `line ${kind}`;
+  const el = document.createElement('div');
+  el.className = `line ${kind}`;
   el.innerHTML = kind === 'sys' ? `<div>${escapeHtml(text)}</div>` : `<div class="who">${who}</div><div>${escapeHtml(text)}</div>`;
   if (chips) el.insertAdjacentHTML('beforeend', chips);
-  dlgLog.appendChild(el); dlgLog.scrollTop = dlgLog.scrollHeight;
+  dlgLog.appendChild(el);
+  dlgLog.scrollTop = dlgLog.scrollHeight;
 }
+
 function renderChoices(list) {
   dlgChoices.innerHTML = '';
-  (list || []).forEach(txt => { const b = document.createElement('button'); b.className = 'choice'; b.textContent = txt; b.onclick = () => submit(txt); dlgChoices.appendChild(b); });
+  (list || []).forEach(txt => {
+    const b = document.createElement('button');
+    b.className = 'choice';
+    b.textContent = txt;
+    b.onclick = () => submit(txt);
+    dlgChoices.appendChild(b);
+  });
+}
+
+function openDialogue(npc) {
+  if (!npc) return;
+  activeNPC = npc;
+
+  // Cache state and pause movement
+  npc._preTalkState = npc.state;
+  npc._preTalkMode = npc.anim ? npc.anim.mode : 'idle';
+  npc._preTalkFacing = npc.facing;
+  npc.state = 'TALKING';
+  npc.anim.moving = false;
+  npc.curSpeed = 0;
+
+  // Face toward player avatar/camera
+  const p = npc.rig.root.position;
+  const dx = camera.position.x - p.x, dz = camera.position.z - p.z;
+  npc.facing = Math.atan2(dx, dz);
+
+  if (npc.bubble) {
+    npc.bubble.visible = false;
+    npc.bubbleUntil = 0;
+  }
+
+  convo = (memory[npc.name] || []).slice();
+  const s = soc(npc.name);
+  s.talks++;
+  saveSocial();
+
+  dlgName.textContent = `${npc.name}  ·  ${LOC[npc.currentSpot]?.label || 'Campus'}  ·  ${npc.currentActivity || 'Active'}`;
+  dlgLog.innerHTML = '';
+  dlgChoices.innerHTML = '';
+
+  for (const m of convo) {
+    if (m.role === 'user' && m._hidden) continue;
+    if (m.role === 'user') {
+      const txt = m.parts?.[0]?.text ?? (typeof m.content === 'string' ? m.content : '');
+      if (txt) addLine('me', 'You', txt);
+    } else {
+      let txt = m.parts?.[0]?.text ?? (typeof m.content === 'string' ? m.content : '');
+      try { const p = JSON.parse(txt); if (p && p.text) txt = p.text; } catch {}
+      if (txt) addLine('npc', npc.name, txt);
+    }
+  }
+
+  dialogue.style.display = 'flex';
+  if (promptEl) promptEl.style.display = 'none';
+  beginTalkCam(npc);
+
+  if (convo.length === 0) {
+    sendToNPC('[Ayanokouji walks up to you. Greet or react in character based on what you are doing.]', true);
+  } else {
+    addLine('sys', '', `— you approach ${npc.name} —`);
+    sendToNPC('[Ayanokouji approaches you again.]', true);
+  }
 }
 
 async function sendToNPC(playerText, opening = false) {
   if (!opening) addLine('me', 'You', playerText);
-  const userMsg = { role: 'user', parts: [{ text: playerText }] }; if (opening) userMsg._hidden = true;
+  const userMsg = { role: 'user', parts: [{ text: playerText }] };
+  if (opening) userMsg._hidden = true;
   convo.push(userMsg);
-  renderChoices([]); dlgThinking.style.display = 'block'; dlgInput.disabled = true;
+  renderChoices([]);
+  dlgThinking.style.display = 'block';
+  dlgInput.disabled = true;
   const npc = activeNPC;
-  try {
-    const contents = toChatMessages(convo.slice(-MAX_MEMORY_TURNS));
-    const res = await fetch(`${API_BASE}/chat/completions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: MODEL, messages: [{ role: 'system', content: npcSystemPrompt(npc) }, ...contents], temperature: 0.85, response_format: { type: 'json_object' } })
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-    const raw = data.choices[0].message.content;
-    convo.push({ role: 'model', parts: [{ text: raw }] });
-    memory[npc.name] = convo; save('cote3dConvos', memory);
-    const parsed = JSON.parse(raw);
-    const chips = Object.entries(parsed.statChanges || {}).filter(([k, v]) => k in stats && v !== 0).map(([k, v]) => `<span class="chip ${v > 0 ? 'up' : 'down'}">${STAT_ICONS[k]} ${v > 0 ? '+' : ''}${v}</span>`).join('');
-    addLine('npc', npc.name, parsed.text || '…', chips ? `<div class="chips">${chips}</div>` : '');
-    speakAs(npc.name, parsed.text, 2, npc);
-    applyStats(parsed.statChanges);
-    renderChoices(parsed.choices);
-  } catch (err) { console.error(err); addLine('sys', '', `⚠️ ${err.message || 'Could not reach the AI.'}`); }
-  finally { dlgThinking.style.display = 'none'; dlgInput.disabled = false; dlgInput.focus(); }
+
+  let parsed = null;
+
+  // Always fetch key fresh so mid-game key button works without page reload
+  const activeKey = (localStorage.getItem('naraApiKey') || apiKey || '').trim();
+
+  // 1. Live AI call to router.bynara.id with model agnes-2.5-flash
+  if (activeKey.length > 0) {
+    try {
+      // Build clean message history — strip internal markers, unwrap old JSON assistant turns
+      const visibleMsgs = convo.slice(-MAX_MEMORY_TURNS).map(m => {
+        const role = (m.role === 'model' || m.role === 'assistant') ? 'assistant' : 'user';
+        let content = m.parts?.[0]?.text ?? (typeof m.content === 'string' ? m.content : '');
+        if (role === 'assistant') {
+          const p = parseNPCResponse(content);
+          if (p && p.text) content = p.text;
+        }
+        return { role, content };
+      });
+
+      const res = await fetch(`${API_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${activeKey}` },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: [{ role: 'system', content: npcSystemPrompt(npc) }, ...visibleMsgs],
+          temperature: 0.88,
+          max_tokens: 380
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const raw = data.choices?.[0]?.message?.content;
+        if (raw && raw.trim().length > 0) {
+          convo.push({ role: 'model', parts: [{ text: raw }] });
+          memory[npc.name] = convo;
+          save('cote3dConvos', memory);
+          parsed = parseNPCResponse(raw);
+        }
+      } else {
+        console.warn(`router.bynara.id HTTP ${res.status}:`, res.statusText);
+      }
+    } catch (err) {
+      console.warn('AI fetch error:', err.message);
+    }
+  }
+
+  // 2. Offline fallback — only when AI is unavailable or no key set
+  if (!parsed || !parsed.text) {
+    parsed = generateProceduralNPCDialogue(npc, playerText, opening);
+    convo.push({ role: 'model', parts: [{ text: JSON.stringify(parsed) }] });
+    memory[npc.name] = convo;
+    save('cote3dConvos', memory);
+  }
+
+  // Render NPC reply, stat chips, TTS, and player reply suggestions
+  const chips = Object.entries(parsed.statChanges || {})
+    .filter(([k, v]) => k in stats && v !== 0)
+    .map(([k, v]) => `<span class="chip ${v > 0 ? 'up' : 'down'}">${STAT_ICONS[k]} ${v > 0 ? '+' : ''}${v}</span>`)
+    .join('');
+
+  addLine('npc', npc.name, parsed.text || '…', chips ? `<div class="chips">${chips}</div>` : '');
+  speakAs(npc.name, parsed.text, 2, npc);
+  applyStats(parsed.statChanges);
+  renderChoices(parsed.choices);
+
+  dlgThinking.style.display = 'none';
+  dlgInput.disabled = false;
+  dlgInput.focus();
 }
 
-function submit(text) { const t = (text ?? dlgInput.value).trim(); if (!t || !canTalk) return; dlgInput.value = ''; sendToNPC(t); }
-function closeDialogue() { dialogue.style.display = 'none'; stopSpeech(); activeNPC = null; endTalkCam(); }
+function submit(text) {
+  const t = (text ?? dlgInput.value).trim();
+  if (!t) return;
+  dlgInput.value = '';
+  sendToNPC(t);
+}
+
+function closeDialogue() {
+  dialogue.style.display = 'none';
+  stopSpeech();
+  const npc = activeNPC;
+  activeNPC = null;
+
+  if (npc) {
+    // Check if schedule event changed while in conversation
+    const currentEvt = getCurrentScheduleEvent(clockMin);
+    const decision = evaluateNPCPurpose(npc, currentEvt);
+
+    if (decision.loc !== npc.currentSpot && decision.loc !== npc._destLoc) {
+      npc._destLoc = decision.loc;
+      npc._destSpotId = decision.spotId;
+      npc.state = decision.state;
+      routeNPCToSpot(npc, decision.loc, decision.spotId);
+    } else if (npc.path && npc.path.length > 0 && npc.pathI < npc.path.length) {
+      // Resume path route
+      npc.state = npc._intendedState || npc._preTalkState || 'GOING_TO_CLASS';
+      npc.anim.mode = 'idle';
+    } else if (npc._preTalkState === 'IN_CLASS') {
+      npc.state = 'IN_CLASS';
+      npc.anim.mode = 'sit_desk';
+      if (npc.targetSpot && npc.targetSpot.facing !== undefined) npc.facing = npc.targetSpot.facing;
+      else if (npc._preTalkFacing !== undefined) npc.facing = npc._preTalkFacing;
+    } else if (npc._preTalkState === 'TEACHING_CLASS') {
+      npc.state = 'TEACHING_CLASS';
+      npc.anim.mode = 'teach_lecture';
+      if (npc.targetSpot && npc.targetSpot.facing !== undefined) npc.facing = npc.targetSpot.facing;
+      else if (npc._preTalkFacing !== undefined) npc.facing = npc._preTalkFacing;
+    } else if (npc._preTalkState === 'STUDYING') {
+      npc.state = 'STUDYING';
+      npc.anim.mode = 'sit_read';
+      if (npc.targetSpot && npc.targetSpot.facing !== undefined) npc.facing = npc.targetSpot.facing;
+      else if (npc._preTalkFacing !== undefined) npc.facing = npc._preTalkFacing;
+    } else if (npc._preTalkState === 'EATING') {
+      npc.state = 'EATING';
+      npc.anim.mode = 'sit_eat';
+      if (npc.targetSpot && npc.targetSpot.facing !== undefined) npc.facing = npc.targetSpot.facing;
+      else if (npc._preTalkFacing !== undefined) npc.facing = npc._preTalkFacing;
+    } else if (npc._preTalkState === 'PLAYING_SPORT') {
+      npc.state = 'PLAYING_SPORT';
+      npc.anim.mode = 'sport_drill';
+      if (npc._preTalkFacing !== undefined) npc.facing = npc._preTalkFacing;
+    } else {
+      npc.state = npc._preTalkState || 'IDLE_AT_DESTINATION';
+      npc.anim.mode = npc._preTalkMode || 'idle';
+      if (npc.targetSpot && npc.targetSpot.facing !== undefined) npc.facing = npc.targetSpot.facing;
+      else if (npc._preTalkFacing !== undefined) npc.facing = npc._preTalkFacing;
+    }
+  }
+
+  endTalkCam();
+}
+
 $('dlg-send').onclick = () => submit();
 dlgInput.addEventListener('keypress', e => { if (e.key === 'Enter') submit(); });
 $('dlg-close').onclick = closeDialogue;
+if ($('dlg-key-btn')) {
+  $('dlg-key-btn').onclick = () => {
+    const currentKey = apiKey || '';
+    const newKey = prompt('Enter your router.bynara.id API Key (Model: agnes-2.5-flash):', currentKey);
+    if (newKey !== null) {
+      apiKey = newKey.trim();
+      localStorage.setItem('naraApiKey', apiKey);
+      canTalk = apiKey.length > 0;
+      if (keyInput) keyInput.value = apiKey;
+      showToast(apiKey ? '✅ API key saved for router.bynara.id (agnes-2.5-flash)' : 'ℹ️ Offline AI mode active');
+    }
+  };
+}
 addEventListener('keydown', e => { if (e.code === 'Escape' && dialogue.style.display === 'flex') closeDialogue(); });
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
+window.openDialogue = openDialogue;
+window.closeDialogue = closeDialogue;
+window.getClosestNPC = getClosestNPC;
 
 // ---------- Guided Chapter 1 Story Mode ----------
 const SCENES = [
@@ -2596,27 +4118,66 @@ function updateObjective() {
   if (story.active && sc) { objectiveEl.style.display = 'block'; $('ov-title').textContent = `Ch.1 · ${sc.title}`; ovText.textContent = sc.objective; }
   else objectiveEl.style.display = 'none';
 }
+const SCENE_FALLBACK_NARRATIONS = {
+  gate: { speaker: 'Narrator', text: 'April at the Advanced Nurturing High School. The government established this school to nurture students who will support the country\'s future. We disembarked from the school bus and passed beneath the towering gates.' },
+  hall: { speaker: 'Narrator', text: 'Inside the grand Main Academic Hall, the entrance ceremony was conducted with solemn precision. The Student Council President stood on the stage, delivering a speech that emphasized capability above all else.' },
+  homeroom: { speaker: 'Chabashira', text: 'Welcome to Class 1-D. Each of you has been granted 100,000 private points on your S-System terminals. In this school, you can buy anything using these points. But remember: your points reflect your value.' },
+  intro: { speaker: 'Hirata', text: 'Hello everyone! I\'m Yousuke Hirata. Let\'s all introduce ourselves so we can get to know each other and make our high school days memorable as a united class!' },
+  after: { speaker: 'Narrator', text: 'After school ended, students dispersed across the vast campus. Keyaki Mall and the cafés were bustling with excited conversations, with classmates spending points freely without a care in the world.' },
+  weeks: { speaker: 'Narrator', text: 'The first weeks passed in an idyllic blur of luxury. Free meals, high-end electronics, and carefree lectures. Yet, an uneasy silence lingered beneath the surface.' },
+  may1: { speaker: 'Chabashira', text: 'It is May 1st. Today is the scheduled point deposit. However, Class 1-D has received exactly 0 points. Did you truly believe a school for the elite would give you free money without consequence?' }
+};
+
 async function narrateScene(force) {
   const sc = currentScene(); if (!sc) return;
   if (story.narrated[sc.id] && !force) return;
   story.narrated[sc.id] = true; save('cote3dStory', story);
   storyEl.style.display = 'flex'; storySpeaker.textContent = 'Narrator'; storyText.textContent = '';
   if (camMode === 'free' && document.pointerLockElement) document.exitPointerLock();
-  if (!canTalk) { storySpeaker.textContent = sc.title; storyText.textContent = sc.objective + '  (Add an API key for full narration.)'; return; }
   storyThinking.style.display = 'block';
-  try {
-    storyConvo.push({ role: 'user', parts: [{ text: sc.prompt }] });
-    const res = await fetch(`${API_BASE}/chat/completions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: MODEL, messages: [{ role: 'system', content: 'You are the Narrator of Classroom of the Elite Vol 1. Keep it short (60-100 words).' }, ...toChatMessages(storyConvo.slice(-16))], temperature: 0.85, response_format: { type: 'json_object' } })
-    });
-    const data = await res.json();
-    const raw = data.choices[0].message.content; storyConvo.push({ role: 'model', parts: [{ text: raw }] });
-    save('cote3dStoryConvo', storyConvo);
-    const p = JSON.parse(raw); storySpeaker.textContent = p.speaker || 'Narrator'; storyText.textContent = p.text || '';
-    speakAs(VOICE_STYLE[p.speaker] ? p.speaker : 'Narrator', p.text, 2);
-  } catch (e) { storyText.textContent = '⚠️ ' + (e.message || 'Narration failed.'); }
-  finally { storyThinking.style.display = 'none'; }
+
+  let p = null;
+  if (apiKey && apiKey.trim().length > 0) {
+    try {
+      storyConvo.push({ role: 'user', parts: [{ text: sc.prompt }] });
+      const res = await fetch(`${API_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey.trim()}`
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: [
+            { role: 'system', content: 'You are the Narrator of Classroom of the Elite Vol 1. Keep it short (60-100 words). Return JSON: {"speaker":"Narrator","text":"..."}' },
+            ...toChatMessages(storyConvo.slice(-16))
+          ],
+          temperature: 0.85
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const raw = data.choices?.[0]?.message?.content;
+        if (raw) {
+          storyConvo.push({ role: 'model', parts: [{ text: raw }] });
+          save('cote3dStoryConvo', storyConvo);
+          p = parseNPCResponse(raw);
+        }
+      }
+    } catch (e) {
+      console.warn('Live narration fetch failed, using story script:', e);
+    }
+  }
+
+  if (!p || !p.text) {
+    p = SCENE_FALLBACK_NARRATIONS[sc.id] || { speaker: 'Narrator', text: sc.objective };
+  }
+
+  storySpeaker.textContent = p.speaker || 'Narrator';
+  storyText.textContent = p.text || '';
+  speakAs(VOICE_STYLE[p.speaker] ? p.speaker : 'Narrator', p.text, 2);
+  storyThinking.style.display = 'none';
 }
 function enterScene(i) {
   story.i = Math.max(0, Math.min(SCENES.length - 1, i)); story.active = true; save('cote3dStory', story);
@@ -2652,6 +4213,7 @@ $('reset-btn').onclick = () => {
 };
 
 updateObjective();
+testCampusNavigation();
 updateSchoolScheduleSystem();
 animate();
 

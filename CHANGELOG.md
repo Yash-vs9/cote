@@ -217,16 +217,28 @@ Formerly `WEB GL/`. Contains 15 standalone Three.js HTML files designed as inter
   - `sit_read`: Seated at library desk, head tilted down 20° towards book, hands holding pages on desk.
   - `sport_drill`: Athletic stance, basketball dribbling arm pump.
 
-### 5. Developer Diagnostics HUD (`F3`)
-- Press **`F3`** in-game to toggle the real-time schedule diagnostics overlay:
-  - Live table showing each NPC's state, current activity reason, and reserved spot ID.
-  - 8 instant time-skip buttons (`07:45 Arrival`, `08:30 Class 1`, `10:05 Break`, `12:15 Lunch`, `13:30 Class 2`, `15:30 Activities`, `18:30 Evening`, `21:00 Dorms`).
+### 8. Traffic-Aware Multi-Route Selection (`RouteManager` & `TrafficManager`)
+- **Previous**: All NPCs followed a single identical shortest line, leading to tightly packed queues in corridors.
+- **Current**: **Dynamic multi-corridor route distribution**:
+  - Expanded campus navigation graph to 42 nodes and 72 bidirectional edges with parallel alternative corridors (Central West Corridor, North Academic Promenade, South Academic Walkway, East Promenade, courtyard diagonals).
+  - `findCandidateRoutes(from, to)` discovers up to 4 distinct valid path candidates using banned-edge BFS exploration.
+  - `TrafficManager` dynamically tracks active student load on each edge and node.
+  - Congestion-aware route scoring:
+    $$\text{Score} = \text{Distance} + (7.5 \times \text{CorridorTraffic}) + \text{NPCSeedJitter}$$
+  - Staggered departures (0.5s to 38.0s) and lateral pathway lane offsets ($\pm 0.6\text{m}$) disperse students across multiple pathways naturally.
 
-### 6. Zero-CORS Self-Contained WebGL Architecture
-- Inlined the entire game engine into `game3d-campus.html` and exposed start handlers globally (`window.beginGame('free')`, `window.beginGame('story')`, `window.beginGame('explore')`). The game works seamlessly whether double-clicked directly via `file:///` or served via HTTP.
-
-### 7. Master Launcher & Shared API Key Sync (`index.html`)
-- Unified landing portal with global API key management that automatically syncs across the 3D Campus Game and 2D RPG.
+### 10. Standalone Java Simulation Engine & Real-Time Connector (`java-server/`)
+- Created full, pure **Java** OOP package (`com.cote.simulation`):
+  - `PersonalityTraits.java`: 5-trait personality model and archetype derivation.
+  - `SchoolSchedule.java`: 10-period daily schedule system.
+  - `CampusGraph.java`: 42-node topological navigation network.
+  - `TrafficManager.java`: Real-time edge load tracking and congestion costing.
+  - `RouteManager.java`: Banned-edge BFS multi-route candidate solver.
+  - `DoorwayQueueManager.java`: Doorway passage mutex arbitration.
+  - `ReservationManager.java`: 25 classroom desks, 24 cafeteria dining spots, 12 library study desks.
+  - `NPC.java` & `SimulationEngine.java`: Master clock and autonomous decision engine.
+  - `SimulationServer.java`: Embedded JDK HTTP server on port `8080` with REST API and CORS support.
+- `JavaSimulationBridge`: Integrated a live bridge in `game3d-campus.html` that automatically detects when `SimulationServer` is running on port 8080 and synchronizes simulation state seamlessly with fallback to in-browser JS.
 
 ---
 
@@ -234,4 +246,6 @@ Formerly `WEB GL/`. Contains 15 standalone Three.js HTML files designed as inter
 
 * **Local Web Server**: Open [http://localhost:3000/index.html](http://localhost:3000/index.html) (or [http://localhost:3000/game3d-campus.html](http://localhost:3000/game3d-campus.html)) in your browser.
 * **Direct File**: Double-click `game3d-campus.html` or `index.html` in File Explorer.
-* **Schedule Diagnostics**: Press **`F3`** in the 3D game to open the diagnostics panel and use the time-skip buttons to test routines.
+* **Run Java Backend Server**: Inside `java-server/`, execute `compile_and_run.bat` (or `compile_and_run.sh`).
+* **Schedule Diagnostics**: Press **`F3`** in the 3D game to view engine status (`🟢 Java Server` vs `⚪ Local JS Engine`), toggle 3D path lines, and use the 8 time-skip buttons to test routines.
+* **Automated Navigation Tests**: Call `testCampusNavigation()` in the browser console (F12) to inspect route candidates and multi-path test results.

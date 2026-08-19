@@ -1,41 +1,96 @@
 # Classroom of the Elite — 3D Campus Simulation & AI Decision RPG
 
-An interactive 3D WebGL simulation and AI-powered role-playing experience set in **Tokyo Metropolitan Advanced Nurturing High School (ANHS)** from the light novel and anime series *Classroom of the Elite* (*Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e*).
+An interactive 3D WebGL simulation, intelligent NPC multi-agent system, and AI-powered role-playing experience set in **Tokyo Metropolitan Advanced Nurturing High School (ANHS)** from the light novel and anime series *Classroom of the Elite* (*Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e*).
 
 ---
 
-## 🌟 Highlights
+## 🌟 Core Highlights & Systems
 
-- **Purpose-Driven NPC Daily Routine System**: Complete zero-random-wandering architecture. All students move and act based on their central schedule, classroom seat assignments, dining tables, library desks, and individual personality traits.
-- **Interactive Seating & Reservation Manager**: 25 unique desks in Class 1-D, 24 dining seats across 6 cafeteria tables, 12 library study desks, and athletic practice stations. No two NPCs ever overlap or fight over seats.
-- **Procedural Activity Animations**: Custom keyframed poses for sitting at desks, writing notes, teacher lecturing, cafeteria eating, library book reading, and athletic sports drills.
-- **Full 15-Sector 3D Campus**: High-fidelity Three.js models for all key locations (Class 1-D, Academic Building, Library, Student Council Room, Cafeteria, Gymnasium, Olympic Pool & Track, Dormitory Tower, Room 401, SIV Camera Store, Palette Café, Keyaki Mall & Karaoke, Front Gate, and Seaside Promenade).
-- **Articulated 3D Characters**: Custom procedural rigs for Horikita Suzune, Kushida Kikyou, Sudou Ken, Kouenji Rokusuke, Chabashira Sae, Hirata Yousuke, Karuizawa Kei, Yukimura Teruhiko, Sakura Airi, Ike Kanji, and Yamauchi Haruki.
-- **Dynamic AI Dialogue & Social Memory**: Real-time roleplay powered by LLM (`router.bynara.id`) with affinity tracking, dynamic moods, persistent memory, and escort AI.
-- **Character Voice Engine (TTS)**: Web Speech Synthesis neural voice system with unique voice pitch and rates per character.
-- **Dynamic 6-Preset Weather System**: Seamless transitions between Clear, Cloudy, Overcast, Rain, Thunderstorm (with lightning flashes), and Sunset.
-- **Developer Debug HUD (`F3`)**: Real-time diagnostic roster displaying NPC states, current activities, reserved spot IDs, and quick time-skip buttons.
+### 1. Purpose-Driven NPC Schedule & Daily Routine System
+- **Zero-Random-Wandering Architecture**: NPCs move and act strictly based on the school timetable (`SCHOOL_SCHEDULE`), facility capacities, and their 5 personality traits (`intelligence`, `discipline`, `athleticism`, `social`, `curiosity`).
+- **Complete 24-Hour Timetable**:
+  - `07:30 - 08:15`: Morning Arrival & Campus Leisure.
+  - `08:15 - 10:00`: Class 1-D Homeroom & Academic Lecture 1.
+  - `10:00 - 10:15`: 15-Minute Recess & Social Chat.
+  - `10:15 - 12:00`: Academic Lecture 2.
+  - `12:00 - 13:00`: Cafeteria Lunch & Dining.
+  - `13:00 - 15:00`: Afternoon S-System Seminar.
+  - `15:00 - 17:30`: Personality-Driven After-School Activities (Library Study, Gym & Field Drills, Palette Café, Keyaki Mall).
+  - `17:30 - 20:00`: Evening Free Leisure.
+  - `20:00 - 22:30`: Dormitory Private Study.
+  - `22:30 - 07:30`: Campus Curfew & Night Rest.
+
+### 2. Traffic-Aware Multi-Route Selection Engine (`RouteManager` & `TrafficManager`)
+- **Parallel Corridor Navigation Network**: 42 waypoints and 72 bidirectional edges with alternative hallways (Central West Corridor, North Academic Promenade, South Academic Walkway, East Promenade, and Courtyard diagonals).
+- **Candidate Route Discovery**: `findCandidateRoutes(from, to)` uses banned-edge BFS exploration to discover up to 4 distinct valid path candidates.
+- **Congestion Cost Scoring**:
+  $$\text{Score} = \text{Distance} + (7.5 \times \text{CorridorTraffic}) + \text{NPCSeedJitter}$$
+  Students automatically disperse onto parallel paths instead of forming one single packed line.
+- **Staggered Departures**: Departures are staggered ($0.5\text{s}$ to $38.0\text{s}$) based on student discipline and role (e.g. Chabashira $0.5\text{s}$, Horikita $1.8\text{s}$, Yukimura $3.2\text{s}$ ... Sudou $24\text{s}$, Kouenji $38\text{s}$).
+- **Seamless Corner Turning & Wall Sliding**: Intermediate waypoints advance immediately upon reaching corner radius without deceleration halting; speed modulates by $\cos(\theta)$ around sharp turns; multi-vector sliding resolves wall corners cleanly.
+- **Stationary Idle Safeguard**: Limb animation is strictly locked when stationary to prevent any "walking in place".
+
+### 3. Interactive Seating & Spot Reservation (`ReservationManager` & `DoorwayQueueManager`)
+- **Class 1-D**: 25 unique desk coordinates (`CLASS_1D_SEAT_01`..`25`) + teacher podium (`CLASS_1D_TEACHER`).
+- **Cafeteria**: 24 dining seats across 6 tables (`CAFETERIA_T1_S1`..`CAFETERIA_T6_S4`).
+- **Memorial Library**: 12 reading desks with banker lamps (`LIBRARY_DESK_01`..`12`).
+- **Doorway Flow Arbitration**: Mutex arbitration guarantees smooth single-file passage through classroom and facility doors without clumping.
+
+### 4. Standalone Java Simulation Engine (`java-server/`) & Live Hybrid Bridge
+- **Pure Java Engine**: Standard JDK-compliant OOP package (`com.cote.simulation`) implementing all schedule, route selection, and behavior logic with zero external dependencies.
+- **Embedded Java REST API**: `SimulationServer.java` serves `/api/health`, `/api/simulation`, `/api/route`, and `/api/time` with CORS support on port `8080`.
+- **`JavaSimulationBridge`**: The 3D frontend automatically detects and syncs with the Java server when active, with instant fallback to local JavaScript when offline.
+
+### 5. High-Fidelity 15-Sector 3D Campus World
+- High-fidelity Three.js models for all 15 sectors (Class 1-D, Academic Building, Library, Student Council Room, Cafeteria, Gymnasium, Olympic Pool & Track, Dormitory Tower, Room 401, SIV Camera Store, Palette Café, Keyaki Mall & Karaoke, Front Gate, and Seaside Promenade).
+- Custom GLSL shaders for swimming pool surface caustic reflections and coastal ocean wave physics.
+
+### 6. Dynamic AI Dialogue & Real-Time Character Voice (TTS)
+- Roleplay conversation powered by LLM (`router.bynara.id`) with affinity tracking, dynamic moods, persistent memory, and companion escort AI.
+- Web Speech Synthesis neural voice system with customized pitch and rate per character.
+
+### 7. Developer Diagnostics HUD (`F3`) & Test Suite
+- Press **`F3`** in-game to view live NPC states, archetypes, active multi-route IDs, corridor traffic costs, toggle 3D path lines, and skip to any schedule period.
+- Automated Test Suite: Run `testCampusNavigation()` in DevTools (`F12`) to validate 100% path reachability and multi-route candidate diversity across all 6 core campus journeys.
 
 ---
 
-## 📂 Project Structure
+## 📁 Project Directory Structure
 
 ```
 cote/
 ├── 📄 index.html                # ANHS Master Portal & Unified Launcher
 ├── 📄 README.md                 # Master Documentation (This File)
 ├── 📄 CHANGELOG.md              # Detailed File-by-File Technical Evolution Log
+├── 📄 server.js                 # Dual-Port Node Server (Web: 3000, API: 8080)
 │
-├── 📁 3d-game/                  # 3D Campus Experiences
+├── 📁 3d-game/                  # 3D Campus Domain
 │   ├── game3d-campus.html      # Flagship Playable 3D Campus Game (Self-contained)
 │   └── game3d-campus.js        # Standalone 3D Game Engine Module
+│
+├── 📁 java-server/              # Standalone Java Simulation Engine (Pure Java)
+│   ├── compile_and_run.bat     # Windows 1-Click Build & Run Script
+│   ├── compile_and_run.sh      # Linux / Mac Build & Run Script
+│   ├── README.md               # Java Engine & API Documentation
+│   └── src/com/cote/simulation/
+│       ├── PersonalityTraits.java
+│       ├── ScheduleEvent.java
+│       ├── SchoolSchedule.java
+│       ├── CampusGraph.java
+│       ├── TrafficManager.java
+│       ├── RouteManager.java
+│       ├── DoorwayQueueManager.java
+│       ├── ReservationManager.java
+│       ├── NPC.java
+│       ├── SimulationEngine.java
+│       └── SimulationServer.java
 │
 ├── 📁 2d-rpg/                   # 2D AI Decision RPG
 │   ├── index.html              # 2D Story Game Interface
 │   ├── app.js                  # 2D Decision Game Engine & Checkpoints
 │   └── style.css               # 2D Glassmorphism UI Styles
 │
-├── 📁 blueprints/               # Standalone 3D Building & Room Dioramas (Formerly 'WEB GL')
+├── 📁 blueprints/               # Standalone 3D Building & Room Dioramas
 │   ├── academic-building.html  # 4-Story Academic Center
 │   ├── classroom.html          # Class 1-D Homeroom
 │   ├── studio-401.html         # Ayanokouji's Dormitory Room
@@ -55,40 +110,37 @@ cote/
 ├── 📁 data/                     # Source Data & Lore References
 │   └── cote_1_extracted.txt    # Classroom of the Elite Vol. 1 source text
 │
-├── 📁 legacy/                   # Historical Prototypes & Supporting Scripts (Archived)
-│   ├── campus.html             # Merged campus viewer prototype
-│   ├── engine.js               # Merged engine script
-│   ├── game.html               # 3D Campus Orbit Explorer
-│   ├── game.js                 # Merged game script
-│   ├── game3d.html             # Initial 3D game prototype
-│   └── game3d.js               # Initial 3D game script
-│
-└── 📁 config/ & settings
-    ├── opencode.json           # NaraRouter Model Configuration
-    ├── .gitignore              # Git Ignore Rules
-    └── .claude/launch.json     # Local Dev Server Configuration
+└── 📁 legacy/                   # Historical Prototypes & Supporting Scripts (Archived)
+    ├── campus.html             # Merged campus viewer prototype
+    ├── engine.js               # Merged engine script
+    ├── game.html               # 3D Campus Orbit Explorer
+    ├── game.js                 # Merged game script
+    ├── game3d.html             # Initial 3D game prototype
+    └── game3d.js               # Initial 3D game script
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🚀 How to Run
 
-### 1. Launching Locally
-
-#### Option A: Node.js / Built-in Server
+### 1. Unified Web & Simulation Server (Recommended)
+Run with Node.js in the project root:
 ```bash
-# In the project root
-node -e "const http=require('http'),fs=require('fs'),path=require('path');http.createServer((q,r)=>{let f=q.url==='/'?'/index.html':q.url.split('?')[0],p=path.join(process.cwd(),decodeURIComponent(f));fs.readFile(p,(e,d)=>{if(e){r.writeHead(404);r.end('Not found');return;}let x=path.extname(p).toLowerCase(),t={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json'}[x]||'text/plain';r.writeHead(200,{'Content-Type':t});r.end(d);});}).listen(3000,()=>console.log('http://localhost:3000'));"
+node server.js
 ```
-Open **[http://localhost:3000/index.html](http://localhost:3000/index.html)** in your browser.
+* **Master Portal**: [http://localhost:3000/index.html](http://localhost:3000/index.html)
+* **3D Campus Game**: [http://localhost:3000/game3d-campus.html](http://localhost:3000/game3d-campus.html)
+* **2D Decision RPG**: [http://localhost:3000/2d-rpg/index.html](http://localhost:3000/2d-rpg/index.html)
+* **Simulation REST API**: [http://localhost:8080/api/simulation](http://localhost:8080/api/simulation)
 
-#### Option B: Python
-```bash
-python -m http.server 3000
-```
+### 2. Standalone Java Simulation Server (Optional)
+Inside `java-server/`:
+* **Windows**: Run `compile_and_run.bat`
+* **Linux/Mac**: Run `./compile_and_run.sh`
+* The 3D game will automatically connect to `http://localhost:8080` via `JavaSimulationBridge`.
 
-#### Option C: Direct File Opening
-Double-click `index.html` or `game3d-campus.html` directly in Windows Explorer. `game3d-campus.html` is 100% self-contained and runs immediately without external module CORS restrictions.
+### 3. Direct File Opening (Offline)
+Double-click `game3d-campus.html` or `index.html` in File Explorer. The 3D game is 100% self-contained and runs with zero CORS restrictions.
 
 ---
 
@@ -98,54 +150,10 @@ Double-click `index.html` or `game3d-campus.html` directly in Windows Explorer. 
 |---|---|
 | **Move** | `W`, `A`, `S`, `D` or Arrow Keys |
 | **Sprint** | `Shift` (Hold while moving) |
-| **Look Around** | Click and Drag Mouse / Pointer Lock |
-| **Interact / Talk** | `E` (When near a classmate or teacher) |
-| **Toggle Schedule Debug HUD** | `F3` (View NPC states & quick time-skip) |
-| **Cycle Weather** | `V` (Clear → Cloudy → Overcast → Rain → Storm → Sunset) |
-| **Toggle Voice (TTS)** | `M` (Enable / Disable Speech Synthesis) |
-| **Exit Dialogue / Menu** | `Escape` |
-
----
-
-## ⏰ Daily School Schedule
-
-| Time | Period | NPC Behaviors |
-|---|---|---|
-| **07:30 – 08:15** | `ARRIVING_AT_SCHOOL` | Students arrive at Front Gate and walk intentionally to Class 1-D |
-| **08:15 – 10:00** | `CLASS` (Morning 1) | Students sit at assigned desks writing notes; Chabashira lectures at podium |
-| **10:00 – 10:15** | `BREAK` | 15-minute break; stretching and talking near desks |
-| **10:15 – 12:00** | `CLASS` (Morning 2) | Second academic lecture and classroom exercises |
-| **12:00 – 13:00** | `LUNCH` | Class leaves room → walks to Cafeteria → sits at 6 tables → eats & chats |
-| **13:00 – 15:00** | `AFTERNOON_CLASS` | Students return to Class 1-D for afternoon studies |
-| **15:00 – 17:30** | `PERSONAL_ACTIVITY` | **Academics** → Library; **Athletes** → Gym/Field; **Socialites** → Café/Mall; **Leisure** → Courtyard/Dorm |
-| **17:30 – 20:00** | `EVENING_LEISURE` | Free time across Keyaki Mall, convenience store, promenade |
-| **20:00 – 22:30** | `DORM_TIME` | Dormitory tower & Room 401 study and relaxation |
-| **22:30 – 07:30** | `NIGHT_REST` | Night curfew in dormitory rooms |
-
----
-
-## 🏛️ Campus Sectors (Spatial Map)
-
-| Coordinates (X, Z) | Location | Description |
-|---|---|---|
-| `(0, 8)` | **Central Courtyard** | Multi-tier fountain, cherry blossom trees, Victorian lampposts |
-| `(0, -56)` | **Academic Building** | 4-story glass curtain-wall structure with grand canopy |
-| `(-62, -20)` | **Class 1-D** | Homeroom classroom with chalkboard, podium, and 25 student desks |
-| `(-62, 22)` | **Memorial Library** | 28m circular reading pavilion with curved glass and radial bookshelves |
-| `(26, -56)` | **Student Council Room** | Mahogany conference table, executive seating, ANHS crest banner |
-| `(62, -20)` | **School Cafeteria** | Serving line, dining tables, beverage dispensers, vending machines |
-| `(62, 22)` | **Gymnasium** | Hardwood basketball court, grandstands, and steel roof trusses |
-| `(-62, 60)` & `(-62, 92)` | **Athletics & Aquatic** | Soccer pitch, running track, 50m pool with animated water shader, 10m diving tower |
-| `(-34, 58)` | **Dormitory Tower** | 15-story residential tower with glass balconies and lobby |
-| `(-50, 58)` | **Room 401** | Ayanokouji's studio bedroom with tatami and balcony |
-| `(34, 54)` | **SIV Convenience Store** | Electronics, convenience goods, CCTV security camera wall |
-| `(54, 54)` | **Palette Café** | Café counter, espresso machine, indoor and outdoor patio seating |
-| `(44, 78)` | **Keyaki Mall & Karaoke**| 3-tier shopping mall with glass pyramid skylight & karaoke lounge |
-| `(0, 95)` | **Front Gate** | ANHS stone totem, school entrance pillars, school bus stop |
-| `(0, -145)` | **Seaside Promenade** | Red brick coastal boardwalk, cliff sea wall, and animated ocean waves |
-
----
-
-## 📖 Detailed Change Log
-
-For a comprehensive file-by-file breakdown of all technical changes, architecture diagrams, and system comparisons, refer to **[CHANGELOG.md](file:///h:/HARSH_PROJECTS/PERSONAL%20PROJECT/cote/CHANGELOG.md)**.
+| **Look Around** | Mouse (click to lock cursor) |
+| **Interact / Talk** | `E` (when near an NPC or interactive spot) |
+| **Cycle Weather** | `V` (or click top-right weather badge) |
+| **Diagnostics HUD** | `F3` (Schedule timetable, NPC roster, route tracker, time skips) |
+| **Toggle 3D Path Lines** | Button in `F3` HUD (`window.toggleDebugPaths()`) |
+| **Exit Pointer Lock / Menu** | `Escape` |
+| **Release Escort Follower** | `X` (when an NPC is escorting you) |
