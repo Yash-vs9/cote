@@ -1934,61 +1934,126 @@ function segment(parent, jx, jy, jz, r, len, color) {
 function buildFace(head, cfg) {
   const skin = cfg.skin ?? 0xf1c9a5;
   const eyes = [];
-  for (const ex of [-0.058, 0.058]) {
-    const g = new THREE.Group(); g.position.set(ex, 0.012, 0.098); head.add(g);
-    addPart(g, geoSph(0.032), 0xfbfbfd, 0, 0, 0, { noShadow: true, scale: [1, 1.12, 0.5] });
-    addPart(g, geoSph(0.019), cfg.eyes ?? 0x3b2f2a, 0, 0, 0.016, { noShadow: true, scale: [1, 1.1, 0.6] });
-    addPart(g, geoSph(0.009), 0x120f14, 0, 0, 0.026, { noShadow: true });
-    addPart(g, geoSph(0.006), 0xffffff, 0.011, 0.014, 0.03, { noShadow: true });
+  for (const ex of [-0.048, 0.048]) {
+    const g = new THREE.Group();
+    g.position.set(ex, 0.01, 0.099);
+    // toe the eyes slightly inward so the flat eye-disk follows the curved front face
+    g.rotation.y = ex > 0 ? -0.28 : 0.28;
+    head.add(g);
+    // white of the eye: large, strongly flattened in z so it lies flat on the shell (front ~z0.106 = on surface)
+    addPart(g, geoSph(0.033), 0xf6f7f8, 0, 0, 0, { noShadow: true, noOutline: true, scale: [0.92, 1.22, 0.22] });
+    // big dark anime iris, sitting just in front of the white
+    addPart(g, geoSph(0.03), cfg.eyes ?? 0x34281d, 0, -0.003, 0.004, { noShadow: true, noOutline: true, scale: [0.86, 1.18, 0.24] });
+    // catch-light highlight, flattened so it hugs the iris
+    addPart(g, geoSph(0.0085), 0xffffff, 0.008, 0.012, 0.011, { noShadow: true, noOutline: true, scale: [1, 1, 0.6] });
     eyes.push(g);
-    addPart(head, new THREE.BoxGeometry(0.052, 0.011, 0.014), cfg.hair, ex, 0.062, 0.104, { noShadow: true, rot: [0, 0, ex > 0 ? -0.14 : 0.14] });
+    // eyebrow resting on the forehead surface (z pulled back to 0.095 so it hugs, above the eye at y0.01)
+    addPart(head, new THREE.BoxGeometry(0.046, 0.011, 0.012), cfg.hair, ex, 0.043, 0.095, { noShadow: true, noOutline: true, rot: [0, 0, ex > 0 ? -0.14 : 0.14] });
   }
-  addPart(head, geoCap(0.016, 0.03), skin, 0, -0.028, 0.113, { noShadow: true, rot: [0.3, 0, 0] });
-  const mouth = addPart(head, new THREE.BoxGeometry(0.05, 0.014, 0.012), 0xb4685f, 0, -0.088, 0.108, { noShadow: true });
-  for (const ex of [-0.125, 0.125]) addPart(head, geoSph(0.028), skin, ex, -0.02, 0.01, { noShadow: true, scale: [0.6, 1, 0.8] });
+  // subtle nose, protruding just slightly (front ~z0.120 vs surface ~0.1155)
+  addPart(head, geoSph(0.011), skin, 0, -0.028, 0.112, { noShadow: true, noOutline: true, scale: [1, 1.4, 0.7] });
+  // small mouth, flush on the lower face
+  const mouth = addPart(head, new THREE.BoxGeometry(0.034, 0.009, 0.01), 0xa85a52, 0, -0.072, 0.099, { noShadow: true, noOutline: true });
+  // ears at the true widest point of the ellipsoid (x~0.107, z~0)
+  for (const ex of [-0.107, 0.107]) addPart(head, geoSph(0.024), skin, ex, -0.01, 0.0, { noShadow: true, noOutline: true, scale: [0.45, 1, 0.85] });
   return { eyes, mouth };
 }
 
 function buildHair(head, cfg) {
   const c = cfg.hair, S = cfg.hairStyle;
-  addPart(head, geoSph(0.132), c, 0, 0.03, -0.058, { scale: [1.05, 1.0, 1.02] });
-  addPart(head, new THREE.BoxGeometry(0.23, 0.055, 0.075), c, 0, 0.088, 0.085, { rot: [0.16, 0, 0] });
+
+  // ---- SHARED BASE (covers scalp: top, back, sides; recedes behind the face front) ----
+  // Scalp cap: large dome pushed up and back so its front (z~0.096) recedes behind
+  // the head front (z~0.118) and never covers the eyes. Big mass -> keep outline.
+  addPart(head, geoSph(0.126), c, 0, 0.03, -0.045, { scale: [1.14, 1.1, 1.12] });
+  // Back-of-skull filler so the nape/lower back never shows bare scalp. Outline.
+  addPart(head, geoSph(0.118), c, 0, -0.02, -0.06, { scale: [1.05, 1.0, 0.9] });
+  // Forehead fringe: bottom edge ~y0.058 (above the brows at y0.043), overlapping the
+  // cap front so there is no bald gap; sits in front of the forehead. Outline.
+  addPart(head, new THREE.BoxGeometry(0.225, 0.06, 0.09), c, 0, 0.088, 0.072, { rot: [0.16, 0, 0] });
+
   if (S === 'long') {
-    addPart(head, new THREE.BoxGeometry(0.235, 0.44, 0.1), c, 0, -0.19, -0.085);
-    for (const ex of [-0.115, 0.115]) addPart(head, new THREE.BoxGeometry(0.06, 0.3, 0.075), c, ex, -0.11, 0.045);
+    // Long mane down the back.
+    addPart(head, new THREE.BoxGeometry(0.245, 0.46, 0.12), c, 0, -0.19, -0.07);
+    addPart(head, new THREE.BoxGeometry(0.2, 0.13, 0.11), c, 0, -0.42, -0.055);
+    // Side locks framing the face, lateral and in front of the ears, clear of the eyes.
+    for (const ex of [-0.118, 0.118])
+      addPart(head, new THREE.BoxGeometry(0.055, 0.34, 0.08), c, ex, -0.13, 0.03, { rot: [0, 0, ex > 0 ? 0.05 : -0.05] });
+    // Thin fringe wisps for softness (tiny detail -> noOutline), above the eyes.
+    for (const ex of [-0.06, 0.06])
+      addPart(head, new THREE.BoxGeometry(0.03, 0.07, 0.02), c, ex, 0.055, 0.108, { noShadow: true, noOutline: true, rot: [0.2, 0, ex > 0 ? -0.15 : 0.15] });
+
   } else if (S === 'medium') {
-    for (const ex of [-0.125, 0.125]) addPart(head, new THREE.BoxGeometry(0.062, 0.22, 0.16), c, ex, -0.055, 0.02);
-    addPart(head, new THREE.BoxGeometry(0.225, 0.16, 0.1), c, 0, -0.075, -0.08);
-    for (const ex of [-0.15, 0.15]) addPart(head, geoSph(0.05), c, ex, -0.16, -0.02, { scale: [0.8, 1.3, 0.8] });
+    // Side volume hugging the sides down to the jaw.
+    for (const ex of [-0.122, 0.122])
+      addPart(head, new THREE.BoxGeometry(0.06, 0.26, 0.14), c, ex, -0.07, 0.0, { rot: [0, 0, ex > 0 ? 0.06 : -0.06] });
+    // Back volume.
+    addPart(head, new THREE.BoxGeometry(0.235, 0.24, 0.11), c, 0, -0.08, -0.065);
+    // Twin low tails (Kushida). Big-ish masses -> keep outline.
+    for (const ex of [-0.148, 0.148])
+      addPart(head, geoCap(0.05, 0.13), c, ex, -0.18, -0.02, { rot: [0.2, 0, ex > 0 ? 0.28 : -0.28] });
+
   } else if (S === 'spiky') {
-    for (const [sx, sz, sy] of [[-0.07, -0.06, 0.16], [0.07, -0.06, 0.16], [0, 0.02, 0.185], [-0.1, 0.05, 0.14], [0.1, 0.05, 0.14]])
-      addPart(head, new THREE.ConeGeometry(0.045, 0.12, 6), c, sx, sy, sz, { rot: [sz * 1.4, 0, -sx * 2.2] });
+    // Short spikes bursting from the crown, angled up/outward; none over the face.
+    for (const [sx, sy, sz, rx, rz] of [
+      [-0.075, 0.145, -0.02, -0.3, 0.55],
+      [0.075, 0.145, -0.02, -0.3, -0.55],
+      [0.0, 0.165, 0.02, 0.15, 0.0],
+      [-0.115, 0.085, 0.0, -0.05, 0.95],
+      [0.115, 0.085, 0.0, -0.05, -0.95],
+      [-0.05, 0.14, 0.075, 0.5, 0.35],
+      [0.05, 0.14, 0.075, 0.5, -0.35],
+      [0.0, 0.11, -0.11, -0.5, 0.0]
+    ]) addPart(head, new THREE.ConeGeometry(0.05, 0.13, 6), c, sx, sy, sz, { rot: [rx, 0, rz] });
+
   } else if (S === 'slick') {
-    addPart(head, new THREE.BoxGeometry(0.245, 0.07, 0.18), c, 0, 0.108, -0.012, { rot: [-0.2, 0, 0] });
-    addPart(head, new THREE.BoxGeometry(0.1, 0.05, 0.11), c, 0.075, 0.1, 0.075, { rot: [0.2, 0, 0.4] });
+    // Swept-back quiff rising up and combing rearward off the forehead.
+    addPart(head, new THREE.BoxGeometry(0.245, 0.1, 0.22), c, 0, 0.115, -0.02, { rot: [-0.28, 0, 0] });
+    // Side sweeps hugging the temples, angled back.
+    for (const ex of [-0.11, 0.11])
+      addPart(head, new THREE.BoxGeometry(0.05, 0.17, 0.17), c, ex, 0.02, -0.03, { rot: [-0.15, 0, 0] });
+    // Slicked tail at the nape.
+    addPart(head, new THREE.BoxGeometry(0.2, 0.12, 0.09), c, 0, -0.06, -0.08, { rot: [0.2, 0, 0] });
   }
 }
 
 function makeRig(cfg) {
-  const skin = cfg.skin ?? 0xf1c9a5, blazer = cfg.blazer ?? 0xa8323a;  // ANHS red blazer
+  const skin = cfg.skin ?? 0xf1c9a5, blazer = cfg.blazer ?? 0xb23440;
   const female = cfg.gender === 'f';
   const lower = cfg.lower ?? (female ? 0x2f3550 : 0x2b2f3a);
+  const shirtC = 0xf3f1e9;
   const scale = cfg.height ?? 1;
-
   const root = new THREE.Group();
   const body = new THREE.Group(); body.scale.setScalar(scale); root.add(body);
-
   const hips = new THREE.Group(); hips.position.y = 0.92; body.add(hips);
   addPart(hips, geoCyl(0.145, 0.125, 0.16), lower, 0, -0.05, 0, { scale: [1, 1, 0.72] });
   const torso = new THREE.Group(); hips.add(torso);
-  addPart(torso, geoCyl(0.175, 0.142, 0.5), blazer, 0, 0.25, 0, { scale: [1, 1, 0.66] });
-  addPart(torso, new THREE.BoxGeometry(0.15, 0.32, 0.12), 0xf7f5ef, 0, 0.33, 0.093, { noShadow: true });
-  addPart(torso, new THREE.BoxGeometry(0.052, 0.2, 0.02), cfg.tie ?? 0x9b2d2d, 0, 0.3, 0.152, { noShadow: true });
-  addPart(torso, new THREE.BoxGeometry(0.2, 0.05, 0.07), 0xf7f5ef, 0, 0.455, 0.088, { noShadow: true, rot: [0.25, 0, 0] });
-  for (const sx of [-0.055, 0.055]) addPart(torso, new THREE.BoxGeometry(0.075, 0.3, 0.03), blazer, sx, 0.31, 0.115, { noShadow: true, rot: [0, 0, sx > 0 ? 0.07 : -0.07] });
-  addPart(torso, geoCyl(0.115, 0.13, 0.1), blazer, 0, 0.5, 0, { noShadow: true, scale: [1, 1, 0.7] });
 
+  // --- Red blazer body (big silhouette part: keep the ink outline) ---
+  addPart(torso, geoCyl(0.175, 0.142, 0.5), blazer, 0, 0.25, 0, { scale: [1, 1, 0.66] });
+
+  // --- White shirt: a NARROW vertical strip flush on the blazer front (no protruding slab) ---
+  // depth 0.03 sits at z 0.09..0.12, flush with the chest surface (~0.10-0.115)
+  addPart(torso, new THREE.BoxGeometry(0.11, 0.32, 0.03), shirtC, 0, 0.31, 0.105, { noShadow: true, noOutline: true });
+
+  // --- Tie: thin dark strip riding on top of the shirt strip, centered ---
+  addPart(torso, new THREE.BoxGeometry(0.035, 0.2, 0.02), cfg.tie ?? 0x24304f, 0, 0.315, 0.122, { noShadow: true, noOutline: true });
+  // small knot at the collar
+  addPart(torso, new THREE.BoxGeometry(0.045, 0.045, 0.022), cfg.tie ?? 0x24304f, 0, 0.44, 0.122, { noShadow: true, noOutline: true });
+
+  // --- White collar: two angled wings flanking the neck, forming a small V at the top ---
+  for (const sx of [-0.045, 0.045])
+    addPart(torso, new THREE.BoxGeometry(0.085, 0.06, 0.03), shirtC, sx, 0.455, 0.1, { noShadow: true, noOutline: true, rot: [0.18, 0, sx > 0 ? -0.55 : 0.55] });
+
+  // --- Red blazer lapels: two diagonal panels forming a V that frames the white shirt ---
+  // tops are OUTWARD near the shoulders, bottoms converge toward center-chest.
+  for (const sx of [-0.075, 0.075])
+    addPart(torso, new THREE.BoxGeometry(0.075, 0.3, 0.032), blazer, sx, 0.32, 0.11, { noShadow: true, noOutline: true, rot: [0, 0, sx > 0 ? -0.32 : 0.32] });
+
+  // --- Neck / collar of the blazer ---
+  addPart(torso, geoCyl(0.115, 0.13, 0.1), blazer, 0, 0.5, 0, { noShadow: true, noOutline: true, scale: [1, 1, 0.7] });
   addPart(torso, geoCyl(0.045, 0.05, 0.075), skin, 0, 0.545, 0, { noShadow: true });
+
   const head = new THREE.Group(); head.position.y = 0.7; torso.add(head);
   addPart(head, geoSph(0.118), skin, 0, 0, 0, { scale: [0.93, 1.16, 1.0] });
   addPart(head, new THREE.BoxGeometry(0.1, 0.06, 0.05), skin, 0, -0.1, 0.062, { noShadow: true, scale: [1, 1, 1] });
@@ -2000,17 +2065,16 @@ function makeRig(cfg) {
     const key = side < 0 ? 'R' : 'L';
     const sh = segment(torso, side * 0.185, 0.475, 0, 0.052, 0.27, blazer);
     const el = segment(sh, 0, -0.27, 0, 0.045, 0.25, cfg.sleeve ?? blazer);
-    addPart(el, geoSph(0.048), skin, 0, -0.27, 0, { noShadow: true, scale: [1, 0.85, 0.8] });
+    addPart(el, geoSph(0.048), skin, 0, -0.27, 0, { noShadow: true, scale: [1, 0.9, 0.85] });
     arms['arm' + key] = sh; arms['elbow' + key] = el;
   }
-
   const legs = {};
   for (const side of [-1, 1]) {
     const key = side < 0 ? 'R' : 'L';
     const hip = segment(hips, side * 0.082, -0.06, 0, 0.078, 0.4, female ? skin : lower);
     const knee = segment(hip, 0, -0.4, 0, 0.062, 0.38, female ? skin : lower);
     if (female) addPart(knee, geoCap(0.066, 0.16), 0x2b2f3a, 0, -0.3, 0, { noShadow: true });
-    const foot = addPart(knee, new THREE.BoxGeometry(0.088, 0.055, 0.19), 0x24262c, 0, -0.4, 0.038, { noShadow: true });
+    const foot = addPart(knee, new THREE.BoxGeometry(0.09, 0.055, 0.2), 0x24262c, 0, -0.4, 0.045, { noShadow: true });
     legs['leg' + key] = hip; legs['knee' + key] = knee; legs['foot' + key] = foot;
   }
   if (female) addPart(hips, geoCyl(0.15, 0.245, 0.24), lower, 0, -0.16, 0, { scale: [1, 1, 0.8] });
@@ -2407,7 +2471,7 @@ COHORT.forEach(c => {
   });
 });
 
-const playerAvatar = makeRig({ hair: 0xa89478, hairStyle: 'medium', gender: 'm', skin: 0xf0c9a0, blazer: 0xa8323a, tie: 0xf3f1ea });
+const playerAvatar = makeRig({ hair: 0xa89478, hairStyle: 'medium', gender: 'm', skin: 0xf0c9a0, blazer: 0xb23440, tie: 0xf3f1ea });
 playerAvatar.root.visible = false; scene.add(playerAvatar.root);
 const playerAnim = { moving: false, phase: 0, talk: false, idleT: 0, mode: 'idle' };
 
