@@ -164,7 +164,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+renderer.toneMappingExposure = 1.16;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
 addEventListener('resize', () => {
@@ -188,7 +189,7 @@ scene.add(sun);
 
 // Sky Dome
 const skyMat = new THREE.ShaderMaterial({
-  uniforms: { topC: { value: new THREE.Color(0x4f93d1) }, botC: { value: new THREE.Color(0xe9f3fb) } },
+  uniforms: { topC: { value: new THREE.Color(0x4a93e0) }, botC: { value: new THREE.Color(0xe9f3fb) } },
   vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
   fragmentShader: 'uniform vec3 topC; uniform vec3 botC; varying vec3 vP; void main(){ float h = clamp(normalize(vP).y*0.5+0.5, 0.0, 1.0); gl_FragColor = vec4(mix(botC, topC, pow(h, 0.75)), 1.0); }',
   side: THREE.BackSide, depthWrite: false, fog: false
@@ -1899,12 +1900,29 @@ function geoCap(r, l) { const k = `${r},${l}`; if (!capCache.has(k)) capCache.se
 function geoCyl(rt, rb, h) { const k = `${rt},${rb},${h}`; if (!cylCache.has(k)) cylCache.set(k, new THREE.CylinderGeometry(rt, rb, h, 14)); return cylCache.get(k); }
 function geoSph(r) { const k = `${r}`; if (!sphCache.has(k)) sphCache.set(k, new THREE.SphereGeometry(r, 18, 14)); return sphCache.get(k); }
 
+// Cel-shading: a stepped gradient map + inverted-hull outline give the anime look.
+const _toonGrad = (() => {
+  const d = new Uint8Array([88, 148, 205, 255]);
+  const t = new THREE.DataTexture(d, d.length, 1, THREE.RedFormat);
+  t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true;
+  return t;
+})();
+const _charMatCache = new Map();
+function charMat(color) { if (!_charMatCache.has(color)) _charMatCache.set(color, new THREE.MeshToonMaterial({ color, gradientMap: _toonGrad })); return _charMatCache.get(color); }
+const _charOutlineMat = new THREE.MeshBasicMaterial({ color: 0x1a1522, side: THREE.BackSide });
 function addPart(parent, geo, color, x, y, z, opts = {}) {
-  const m = new THREE.Mesh(geo, std({ color, roughness: 0.6 }));
+  const m = new THREE.Mesh(geo, charMat(color));
   m.position.set(x, y, z); m.castShadow = !opts.noShadow;
   if (opts.scale) m.scale.set(...opts.scale);
   if (opts.rot) m.rotation.set(...opts.rot);
   parent.add(m);
+  // outline the silhouette parts (body/head/hair/limbs) — skip tiny face details (noShadow)
+  if (!opts.noShadow && !opts.noOutline) {
+    const o = new THREE.Mesh(geo, _charOutlineMat);
+    o.position.copy(m.position); o.rotation.copy(m.rotation);
+    o.scale.set(m.scale.x * 1.07, m.scale.y * 1.07, m.scale.z * 1.07);
+    parent.add(o);
+  }
   return m;
 }
 function segment(parent, jx, jy, jz, r, len, color) {
@@ -1933,7 +1951,7 @@ function buildFace(head, cfg) {
 
 function buildHair(head, cfg) {
   const c = cfg.hair, S = cfg.hairStyle;
-  addPart(head, geoSph(0.132), c, 0, 0.012, -0.008, { scale: [1.06, 1.0, 1.06] });
+  addPart(head, geoSph(0.132), c, 0, 0.03, -0.058, { scale: [1.05, 1.0, 1.02] });
   addPart(head, new THREE.BoxGeometry(0.23, 0.055, 0.075), c, 0, 0.088, 0.085, { rot: [0.16, 0, 0] });
   if (S === 'long') {
     addPart(head, new THREE.BoxGeometry(0.235, 0.44, 0.1), c, 0, -0.19, -0.085);
@@ -1952,7 +1970,7 @@ function buildHair(head, cfg) {
 }
 
 function makeRig(cfg) {
-  const skin = cfg.skin ?? 0xf1c9a5, blazer = cfg.blazer ?? 0x28304a;
+  const skin = cfg.skin ?? 0xf1c9a5, blazer = cfg.blazer ?? 0xa8323a;  // ANHS red blazer
   const female = cfg.gender === 'f';
   const lower = cfg.lower ?? (female ? 0x2f3550 : 0x2b2f3a);
   const scale = cfg.height ?? 1;
@@ -2379,7 +2397,7 @@ const COHORT = [
   { id: 'yukimura', name: 'Yukimura', traits: { intelligence: 0.94, discipline: 0.92, athleticism: 0.30, social: 0.40, curiosity: 0.88 }, seat: 'CLASS_1D_SEAT_06', act: ['LIBRARY', 'STUDY'], hair: 0x1f2937, hairStyle: 'medium', gender: 'm', spawn: 'library', speed: 2.3 },
   { id: 'sakura', name: 'Sakura', traits: { intelligence: 0.70, discipline: 0.80, athleticism: 0.30, social: 0.20, curiosity: 0.82 }, seat: 'CLASS_1D_SEAT_22', act: ['SIV_STORE', 'COURTYARD'], hair: 0xf472b6, hairStyle: 'long', gender: 'f', spawn: 'dorm', speed: 2.0 },
   { id: 'ike', name: 'Ike', traits: { intelligence: 0.40, discipline: 0.35, athleticism: 0.65, social: 0.80, curiosity: 0.60 }, seat: 'CLASS_1D_SEAT_02', act: ['CAFETERIA', 'KEYAKI_MALL'], hair: 0x854d0e, hairStyle: 'spiky', gender: 'm', spawn: 'cafeteria', speed: 2.3 },
-  { id: 'yamauchi', name: 'Yamauchi', traits: { intelligence: 0.38, discipline: 0.30, athleticism: 0.60, social: 0.78, curiosity: 0.55 }, seat: 'CLASS_1D_SEAT_04', act: ['CAFETERIA', 'COURTYARD'], hair: 0x475569, hairStyle: 'spiky', gender: 'm', spawn: 'gate', speed: 2.2 }
+  { id: 'yamauchi', name: 'Yamauchi', traits: { intelligence: 0.38, discipline: 0.30, athleticism: 0.60, social: 0.78, curiosity: 0.55 }, seat: 'CLASS_1D_SEAT_04', act: ['CAFETERIA', 'COURTYARD'], hair: 0x6b4a2c, hairStyle: 'spiky', gender: 'm', spawn: 'gate', speed: 2.2 }
 ];
 
 COHORT.forEach(c => {
@@ -2389,7 +2407,7 @@ COHORT.forEach(c => {
   });
 });
 
-const playerAvatar = makeRig({ hair: 0x2a2622, hairStyle: 'medium', gender: 'm', skin: 0xf0c9a0, blazer: 0x28304a, tie: 0x2b4a8a });
+const playerAvatar = makeRig({ hair: 0xa89478, hairStyle: 'medium', gender: 'm', skin: 0xf0c9a0, blazer: 0xa8323a, tie: 0xf3f1ea });
 playerAvatar.root.visible = false; scene.add(playerAvatar.root);
 const playerAnim = { moving: false, phase: 0, talk: false, idleT: 0, mode: 'idle' };
 
@@ -2958,7 +2976,7 @@ function updateSchoolScheduleSystem() {
 
 // ---------- Dynamic Weather Engine ----------
 const WEATHERS = {
-  clear:    { icon: '☀️', name: 'Clear',    top: 0x4f93d1, bot: 0xe9f3fb, fog: 0xd6e8f8, near: 140, far: 520, sun: 2.5,  hemi: 1.00, rain: 0, cloud: 0.12, wet: 0.00 },
+  clear:    { icon: '☀️', name: 'Clear',    top: 0x4a93e0, bot: 0xe9f3fb, fog: 0xd6e8f8, near: 140, far: 520, sun: 2.5,  hemi: 1.00, rain: 0, cloud: 0.12, wet: 0.00 },
   cloudy:   { icon: '⛅', name: 'Cloudy',   top: 0x7fa3c4, bot: 0xe4ecf2, fog: 0xd6e0e8, near: 120, far: 440, sun: 1.6,  hemi: 0.95, rain: 0, cloud: 0.55, wet: 0.05 },
   overcast: { icon: '☁️', name: 'Overcast', top: 0x8d9aa6, bot: 0xd3d9dd, fog: 0xc9d1d6, near: 90,  far: 360, sun: 0.9,  hemi: 0.85, rain: 0, cloud: 0.9,  wet: 0.12 },
   rain:     { icon: '🌧️', name: 'Rain',     top: 0x6b7784, bot: 0xb9c2c8, fog: 0xa9b4bb, near: 60,  far: 260, sun: 0.5,  hemi: 0.72, rain: 1, cloud: 1.0,  wet: 0.34 },
@@ -2966,7 +2984,7 @@ const WEATHERS = {
   sunset:   { icon: '🌇', name: 'Sunset',   top: 0x3f6ea8, bot: 0xf6c69a, fog: 0xe8b98f, near: 110, far: 420, sun: 1.8,  hemi: 0.9,  rain: 0, cloud: 0.35, wet: 0.02 },
 };
 const W_ORDER = ['clear', 'cloudy', 'overcast', 'rain', 'storm', 'sunset'];
-const wCur = { ...WEATHERS.clear, top: new THREE.Color(0x4f93d1), bot: new THREE.Color(0xe9f3fb), fog: new THREE.Color(0xd6e8f8) };
+const wCur = { ...WEATHERS.clear, top: new THREE.Color(0x4a93e0), bot: new THREE.Color(0xe9f3fb), fog: new THREE.Color(0xd6e8f8) };
 let wTargetKey = 'clear', wTarget = WEATHERS.clear, wNextChange = 50 + Math.random() * 50, flash = 0;
 
 const weatherChip = document.createElement('div');
