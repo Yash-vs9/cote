@@ -28,8 +28,7 @@ cote/
 │
 ├── 📁 3d-game/                  # 3D Campus Experiences
 │   ├── game3d-campus.html      # Flagship Playable 3D Campus Game (Self-contained)
-│   ├── game3d-campus.js        # 3D Campus Game Engine Module
-│   └── game.html               # 3D Campus Architecture Explorer (OrbitControls)
+│   └── game3d-campus.js        # Standalone 3D Game Engine Module
 │
 ├── 📁 2d-rpg/                   # 2D AI Decision RPG
 │   ├── index.html              # 2D Story Game Interface
@@ -56,7 +55,11 @@ cote/
 ├── 📁 data/                     # Source Data & Lore References
 │   └── cote_1_extracted.txt    # Classroom of the Elite Vol. 1 source text
 │
-├── 📁 legacy/                   # Historical Prototypes (Preserved)
+├── 📁 legacy/                   # Historical Prototypes & Supporting Scripts (Archived)
+│   ├── campus.html             # Merged campus viewer prototype
+│   ├── engine.js               # Merged engine script
+│   ├── game.html               # 3D Campus Orbit Explorer
+│   ├── game.js                 # Merged game script
 │   ├── game3d.html             # Initial 3D game prototype
 │   └── game3d.js               # Initial 3D game script
 │
@@ -72,22 +75,20 @@ cote/
 
 ### 1. Launching Locally
 
-You can run the project using any local HTTP server:
-
-#### Option A: Python
+#### Option A: Node.js / Built-in Server
 ```bash
-# In the project directory
-python -m http.server 3000
+# In the project root
+node -e "const http=require('http'),fs=require('fs'),path=require('path');http.createServer((q,r)=>{let f=q.url==='/'?'/index.html':q.url.split('?')[0],p=path.join(process.cwd(),decodeURIComponent(f));fs.readFile(p,(e,d)=>{if(e){r.writeHead(404);r.end('Not found');return;}let x=path.extname(p).toLowerCase(),t={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json'}[x]||'text/plain';r.writeHead(200,{'Content-Type':t});r.end(d);});}).listen(3000,()=>console.log('http://localhost:3000'));"
 ```
 Open **[http://localhost:3000/index.html](http://localhost:3000/index.html)** in your browser.
 
-#### Option B: Node.js
+#### Option B: Python
 ```bash
-npx serve .
+python -m http.server 3000
 ```
 
 #### Option C: Direct File Opening
-Double-click `index.html` or `game3d-campus.html` directly in Windows Explorer. `game3d-campus.html` is 100% self-contained and will run immediately without external module CORS restrictions.
+Double-click `index.html` or `game3d-campus.html` directly in Windows Explorer. `game3d-campus.html` is 100% self-contained and runs immediately without external module CORS restrictions.
 
 ---
 

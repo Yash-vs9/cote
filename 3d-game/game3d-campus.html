@@ -213,7 +213,8 @@
 
 <script type="module">
 // =========================================================================
-// Classroom of the Elite — 3D Campus World Engine (Self-Contained)
+// Classroom of the Elite — 3D Campus World
+// Purpose-Driven NPC Daily Routine, Schedule, Seating Reservation & AI Engine
 // =========================================================================
 import * as THREE from 'three';
 
@@ -544,6 +545,7 @@ function getCurrentScheduleEvent(min) {
     if (s < e) {
       if (normalized >= s && normalized < e) return evt;
     } else {
+      // Wraps overnight (e.g. 22:30 - 07:30)
       if (normalized >= s || normalized < e) return evt;
     }
   }
@@ -573,13 +575,17 @@ export const campusLocations = {
 };
 const LOC = campusLocations;
 
+// Spatial Interactive Spots Registry (Seats, Desks, Tables, Drill stations)
 export const SPOTS = {};
 
 function registerSpot(id, loc, x, y, z, facing, type = 'seat', extra = {}) {
   SPOTS[id] = { id, loc, x, y, z, facing, type, reservedBy: null, occupiedBy: null, ...extra };
 }
 
-// 1. Class 1-D Desks (25 Seats in 5x5 layout + Teacher podium)
+// 1. Generate Class 1-D Desks (25 Seats in 5x5 layout + Teacher podium)
+// In buildClassroom1D, group at (-62, 0.2, -20) rotated -PI/2.
+// dx = -3.6 + col * 1.8; dz = -1.6 + row * 1.3;
+// In world coordinates: X = -62 + (dz + 0.42), Z = -20 - dx.
 for (let row = 0; row < 5; row++) {
   for (let col = 0; col < 5; col++) {
     const seatNum = row * 5 + col + 1;
@@ -596,11 +602,14 @@ for (let row = 0; row < 5; row++) {
 }
 registerSpot('CLASS_1D_TEACHER', 'class1d', -65.2, 0, -20, Math.PI / 2, 'podium');
 
-// 2. Cafeteria Dining Tables (6 tables x 4 seats = 24 seats)
+// 2. Generate Cafeteria Dining Tables (6 tables x 4 seats = 24 seats)
+// Cafeteria at (62, 0, -20) rotated PI/2.
+// tx = -7 + c * 14, tz = -2 + r * 4.5;
 for (let r = 0; r < 3; r++) {
   for (let c = 0; c < 2; c++) {
     const tableNum = r * 2 + c + 1;
     const tx = -7 + c * 14, tz = -2 + r * 4.5;
+    // 4 seats per table along benches: (tx - 2.5, tz - 1.1), (tx + 2.5, tz - 1.1), (tx - 2.5, tz + 1.1), (tx + 2.5, tz + 1.1)
     const seatOffsets = [
       { sx: tx - 2.5, sz: tz - 1.1, f: Math.PI / 2 },
       { sx: tx + 2.5, sz: tz - 1.1, f: Math.PI / 2 },
@@ -609,13 +618,14 @@ for (let r = 0; r < 3; r++) {
     ];
     seatOffsets.forEach((so, si) => {
       const sId = `CAFETERIA_T${tableNum}_S${si + 1}`;
+      // Rotated by PI/2: worldX = 62 - so.sz, worldZ = -20 + so.sx
       const wx = 62 - so.sz, wz = -20 + so.sx;
       registerSpot(sId, 'cafeteria', wx, 0, wz, so.f + Math.PI / 2, 'dining_seat', { table: tableNum });
     });
   }
 }
 
-// 3. Memorial Library Study Desks (12 reading seats)
+// 3. Generate Memorial Library Study Desks (12 reading seats)
 for (let i = 0; i < 12; i++) {
   const sId = `LIBRARY_DESK_${String(i + 1).padStart(2, '0')}`;
   const ang = (i / 12) * Math.PI * 1.5 + 0.3;
@@ -625,7 +635,7 @@ for (let i = 0; i < 12; i++) {
   registerSpot(sId, 'library', wx, 0, wz, ang + Math.PI, 'library_seat');
 }
 
-// 4. Gymnasium Stations
+// 4. Generate Gymnasium Stations
 registerSpot('GYM_HOOP_N', 'gym', 62, 0, 8, -Math.PI / 2, 'sport_drill');
 registerSpot('GYM_HOOP_S', 'gym', 62, 0, 36, Math.PI / 2, 'sport_drill');
 registerSpot('GYM_COURT_MID', 'gym', 62, 0, 22, 0, 'sport_drill');
@@ -633,14 +643,14 @@ for (let b = 1; b <= 4; b++) {
   registerSpot(`GYM_BENCH_${b}`, 'gym', 51.5 + b * 1.2, 0, 22, -Math.PI / 2, 'bench');
 }
 
-// 5. Sports Field & Aquatic Stations
+// 5. Generate Sports Field & Aquatic Stations
 registerSpot('FIELD_PITCH_N', 'field', -62, 0, 50, 0, 'sport_drill');
 registerSpot('FIELD_PITCH_S', 'field', -62, 0, 70, Math.PI, 'sport_drill');
 registerSpot('FIELD_TRACK_1', 'field', -44, 0, 60, Math.PI / 2, 'sport_drill');
 registerSpot('AQUA_DECK_1', 'aquatic', -62, 0, 82, 0, 'sport_drill');
 registerSpot('AQUA_DECK_2', 'aquatic', -62, 0, 102, Math.PI, 'sport_drill');
 
-// 6. Commercial & Leisure Spots
+// 6. Generate Commercial & Leisure Spots
 registerSpot('CAFE_T1_S1', 'cafe', 51.6, 0, 53.0, 0, 'cafe_seat');
 registerSpot('CAFE_T1_S2', 'cafe', 56.4, 0, 53.0, Math.PI, 'cafe_seat');
 registerSpot('MALL_SOFA_1', 'mall', 56, 0, 82, -Math.PI / 2, 'social_seat');
@@ -764,7 +774,729 @@ function resolveLoc(str) {
   return LOC[s] ? s : null;
 }
 
-// Assemble architecture
+// =========================================================================
+// 15-MODEL HIGH-FIDELITY 3D CAMPUS ENVIRONMENT
+// =========================================================================
+const campus = new THREE.Group();
+const grpGround = new THREE.Group();
+const grpCentralPark = new THREE.Group();
+const grpAcademicNorth = new THREE.Group();
+const grpWestWing = new THREE.Group();
+const grpEastWing = new THREE.Group();
+const grpAthleticsWest = new THREE.Group();
+const grpResidentialSW = new THREE.Group();
+const grpCommercialSE = new THREE.Group();
+const grpSeasideNorth = new THREE.Group();
+
+campus.add(
+  grpGround, grpCentralPark, grpAcademicNorth, grpWestWing, grpEastWing,
+  grpAthleticsWest, grpResidentialSW, grpCommercialSE, grpSeasideNorth
+);
+scene.add(campus);
+
+let waterUniforms = null;
+let oceanUniforms = null;
+
+function buildCampusFoundation() {
+  const grassMat = std({ map: noiseTexture('#7aa84f', ['#6c9842', '#5f8838', '#86b65a'], 2400, 48), roughness: 0.95 });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(520, 520), grassMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.05;
+  ground.receiveShadow = true;
+  grpGround.add(ground);
+
+  const paveMat = std({ map: tileTexture('#e4dfd0', '#d8d1c0', 8), roughness: 0.55 });
+  paveMat.map.repeat.set(12, 12);
+
+  const plaza = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), paveMat);
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.set(0, 0.01, 8);
+  plaza.receiveShadow = true;
+  grpGround.add(plaza);
+
+  const nsProm = new THREE.Mesh(new THREE.PlaneGeometry(14, 180), paveMat);
+  nsProm.rotation.x = -Math.PI / 2;
+  nsProm.position.set(0, 0.012, 20);
+  nsProm.receiveShadow = true;
+  grpGround.add(nsProm);
+
+  const ewProm = new THREE.Mesh(new THREE.PlaneGeometry(230, 14), paveMat);
+  ewProm.rotation.x = -Math.PI / 2;
+  ewProm.position.set(0, 0.012, 0);
+  ewProm.receiveShadow = true;
+  grpGround.add(ewProm);
+
+  [-46, 46].forEach(px => {
+    const sideP = new THREE.Mesh(new THREE.PlaneGeometry(14, 96), paveMat);
+    sideP.rotation.x = -Math.PI / 2;
+    sideP.position.set(px, 0.012, 0);
+    sideP.receiveShadow = true;
+    grpGround.add(sideP);
+  });
+
+  const crossSt = new THREE.Mesh(new THREE.PlaneGeometry(120, 14), paveMat);
+  crossSt.rotation.x = -Math.PI / 2;
+  crossSt.position.set(0, 0.012, 44);
+  crossSt.receiveShadow = true;
+  grpGround.add(crossSt);
+}
+
+function buildCentralPark() {
+  const g = grpCentralPark;
+  g.position.set(0, 0, 8);
+
+  const matGranite = std({ color: 0x8e8d8a, roughness: 0.5, metalness: 0.05 });
+  const fountBase = new THREE.Mesh(new THREE.CylinderGeometry(7.5, 7.8, 0.9, 36), matGranite);
+  fountBase.position.y = 0.45;
+  fountBase.castShadow = true; fountBase.receiveShadow = true;
+  g.add(fountBase);
+  addCollider(0, 8, 8.0, 8.0);
+
+  const fountWater = new THREE.Mesh(new THREE.CircleGeometry(7.0, 36), phys({ color: 0x22a6b3, transmission: 0.85, roughness: 0.1, ior: 1.33 }));
+  fountWater.rotation.x = -Math.PI / 2;
+  fountWater.position.y = 0.8;
+  g.add(fountWater);
+
+  const tier2 = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 4.0, 1.4, 28), matGranite);
+  tier2.position.y = 1.3;
+  tier2.castShadow = true;
+  g.add(tier2);
+
+  const centerCol = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.1, 3.2, 20), matGranite);
+  centerCol.position.y = 2.8;
+  centerCol.castShadow = true;
+  g.add(centerCol);
+
+  const topSpire = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.8, 16), matGranite);
+  topSpire.position.y = 4.8;
+  g.add(topSpire);
+
+  const sakuraMat = std({ color: 0xfda4af, roughness: 0.9 });
+  const trunkMat = std({ color: 0x5a3a22, roughness: 0.85 });
+
+  const treeSpots = [
+    [-22, 26], [22, 26], [-22, -8], [22, -8], [-26, 36], [26, 36],
+    [18, -30], [-18, -30], [-70, 34], [70, 34], [14, 62], [-14, 62]
+  ];
+  treeSpots.forEach(([tx, tz]) => {
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 4.5, 8), trunkMat);
+    trunk.position.set(tx, 2.25, tz);
+    trunk.castShadow = true;
+    g.add(trunk);
+    const canopy = new THREE.Mesh(new THREE.DodecahedronGeometry(3.0, 1), sakuraMat);
+    canopy.position.set(tx, 5.8, tz);
+    canopy.castShadow = true;
+    g.add(canopy);
+    addCollider(tx, tz + 8, 1.0, 1.0);
+  });
+
+  const benchSpots = [[-8, 20], [8, 20], [-8, -6], [8, -6], [-8, 30], [8, 52]];
+  benchSpots.forEach(([bx, bz]) => {
+    makeBox(2.4, 0.45, 0.7, matGranite, bx, 0.225, bz, g);
+    addCollider(bx, bz + 8, 2.4, 0.7);
+  });
+
+  const lampSpots = [[-10, 18], [10, 18], [-10, -12], [10, -12], [-40, 8], [40, 8], [-10, 38], [10, 38]];
+  lampSpots.forEach(([lx, lz]) => {
+    makeBox(0.25, 4.2, 0.25, std({ color: 0x3a3f47 }), lx, 2.1, lz, g);
+    makeBox(0.6, 0.2, 0.4, std({ color: 0xffffff, emissive: 0xfff3d4, emissiveIntensity: 1.8 }), lx, 4.2, lz, g);
+    addCollider(lx, lz + 8, 0.5, 0.5);
+  });
+}
+
+function buildAcademicBuilding() {
+  const g = grpAcademicNorth;
+  g.position.set(0, 0, -56);
+
+  const M = {
+    steel: std({ color: 0x3a3d40, roughness: 0.3, metalness: 0.85 }),
+    glass: phys({ color: 0xa8c2d4, transmission: 0.88, roughness: 0.1, ior: 1.5 }),
+    concrete: std({ color: 0xb0b0b0, roughness: 0.45 }),
+    concreteDark: std({ color: 0x808388, roughness: 0.55 }),
+    roofGrey: std({ color: 0x71747a, roughness: 0.7 })
+  };
+
+  const BLD = { L: 60, D: 26, H: 17, stories: 4 };
+
+  for (let k = 0; k <= BLD.stories; k++) {
+    makeBox(BLD.L, 0.4, BLD.D, M.concreteDark, 0, 4.25 * k + 0.2, 0, g);
+  }
+
+  const rows = 4, bays = 12;
+  const bayW = BLD.L / bays, glassH = 3.8;
+  for (let r = 0; r < rows; r++) {
+    for (let b = 0; b < bays; b++) {
+      const bx = -BLD.L / 2 + bayW * (b + 0.5);
+      const by = 2.2 + 4.25 * r;
+      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, BLD.D / 2, g, false);
+      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, -BLD.D / 2, g, false);
+    }
+  }
+
+  for (let b = 0; b <= bays; b++) {
+    const px = -BLD.L / 2 + bayW * b;
+    makeBox(0.6, BLD.H, 0.6, M.steel, px, BLD.H / 2, BLD.D / 2 + 0.1, g);
+    makeBox(0.6, BLD.H, 0.6, M.steel, px, BLD.H / 2, -BLD.D / 2 - 0.1, g);
+  }
+
+  makeBox(18, 0.4, 6, M.concrete, 0, 6.4, BLD.D / 2 + 3.2, g);
+  makeBox(0.5, 6.4, 0.5, M.steel, -7.5, 3.2, BLD.D / 2 + 5.8, g);
+  makeBox(0.5, 6.4, 0.5, M.steel, 7.5, 3.2, BLD.D / 2 + 5.8, g);
+  makeBox(14, 0.8, 5, M.concrete, 0, 0.4, BLD.D / 2 + 2.5, g);
+
+  makeBox(8, 3.2, 8, M.concreteDark, 0, BLD.H + 1.6, 0, g);
+  makeBox(5, 1.8, 3.5, M.roofGrey, -16, BLD.H + 0.9, -4, g);
+  makeBox(4, 1.5, 3.0, M.roofGrey, 16, BLD.H + 0.75, 4, g);
+
+  addCollider(0, -56 - 13, 60, 1.0);
+  addCollider(-30, -56, 1.0, 26);
+  addCollider(30, -56, 1.0, 26);
+  addCollider(-20, -56 + 13, 20, 1.0);
+  addCollider(20, -56 + 13, 20, 1.0);
+
+  makeLabel('MAIN HALL & ACADEMIC', 0, 18.5, -56 + 13.5, 0xffffff, 3.0);
+}
+
+function buildClassroom1D() {
+  const g = new THREE.Group();
+  g.position.set(-62, 0.2, -20);
+  g.rotation.y = -Math.PI / 2;
+
+  const matFloor = std({ map: tileTexture('#d6c7b2', '#c4b59f', 6), roughness: 0.5 });
+  const matWall = std({ color: 0xf0ede6, roughness: 0.9 });
+  const matBoard = std({ color: 0x1f4738, roughness: 0.6 });
+  const matDesk = std({ color: 0xcca872, roughness: 0.5 });
+  const matSteel = std({ color: 0x3a3f45, roughness: 0.4, metalness: 0.8 });
+
+  makeBox(12, 0.1, 9, matFloor, 0, 0, 0, g, false, true);
+  makeBox(12, 3.5, 0.15, matWall, 0, 1.75, -4.5, g);
+  makeBox(0.15, 3.5, 9, matWall, -6.0, 1.75, 0, g);
+
+  makeBox(6.5, 1.4, 0.05, matBoard, 0, 1.8, -4.42, g);
+  makeBox(1.6, 1.0, 0.9, matDesk, 0, 0.5, -3.2, g);
+
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 5; col++) {
+      const dx = -3.6 + col * 1.8;
+      const dz = -1.6 + row * 1.3;
+      makeBox(0.9, 0.04, 0.55, matDesk, dx, 0.72, dz, g);
+      makeBox(0.04, 0.7, 0.04, matSteel, dx - 0.4, 0.35, dz - 0.22, g);
+      makeBox(0.04, 0.7, 0.04, matSteel, dx + 0.4, 0.35, dz - 0.22, g);
+      makeBox(0.42, 0.03, 0.4, matDesk, dx, 0.45, dz + 0.42, g);
+      makeBox(0.42, 0.4, 0.03, matDesk, dx, 0.75, dz + 0.6, g);
+    }
+  }
+
+  addCollider(-62, -20 - 4.5, 9, 0.5);
+  addCollider(-62, -20 + 4.5, 9, 0.5);
+  addCollider(-62 - 6.0, -20, 0.5, 12);
+  makeLabel('CLASS 1-D', -62 + 6.2, 3.5, -20, 0xffffff, 2.2);
+
+  grpWestWing.add(g);
+}
+
+function buildMemorialLibrary() {
+  const g = new THREE.Group();
+  g.position.set(-62, 0, 22);
+  g.rotation.y = -Math.PI / 2;
+
+  const matWood = std({ color: 0x5c3a21, roughness: 0.5 });
+  const matFloor = std({ map: tileTexture('#8a6238', '#6b4a2c', 8), roughness: 0.5 });
+  const matGlass = phys({ color: 0xf7ead2, transmission: 0.85, roughness: 0.1 });
+  const matBanker = std({ color: 0x1b4d3e, emissive: 0x37c46e, emissiveIntensity: 1.5 });
+
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(14, 48), matFloor);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0.04;
+  g.add(floor);
+
+  const wallGeo = new THREE.CylinderGeometry(14, 14, 7, 36, 1, true, 0, Math.PI * 1.5);
+  const wallMesh = new THREE.Mesh(wallGeo, matGlass);
+  wallMesh.position.y = 3.5;
+  g.add(wallMesh);
+
+  for (let a = 0.2; a < Math.PI * 1.3; a += 0.45) {
+    const rx = Math.cos(a) * 9.5, rz = Math.sin(a) * 9.5;
+    const shelf = makeBox(4.2, 4.5, 0.8, matWood, rx, 2.25, rz, g);
+    shelf.rotation.y = -a + Math.PI / 2;
+  }
+
+  const desk = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.0, 1.1, 24, 1, true), matWood);
+  desk.position.y = 0.55;
+  g.add(desk);
+
+  for (const sx of [-5, 5]) {
+    makeBox(3.5, 0.75, 1.2, matWood, sx, 0.38, 2, g);
+    makeBox(0.4, 0.2, 0.2, matBanker, sx, 0.85, 2, g);
+  }
+
+  addCollider(-62, 22 - 14, 14, 1);
+  addCollider(-62, 22 + 14, 14, 1);
+  addCollider(-62 - 14, 22, 1, 28);
+  makeLabel('MEMORIAL LIBRARY', -62 + 8, 4.5, 22, 0xffffff, 2.2);
+
+  grpWestWing.add(g);
+}
+
+function buildCouncilRoom() {
+  const g = new THREE.Group();
+  g.position.set(26, 0.2, -56);
+
+  const matCarpet = std({ color: 0x2b2d38, roughness: 0.95 });
+  const matMahogany = phys({ color: 0x3d1c06, roughness: 0.2, metalness: 0.1, clearcoat: 0.8 });
+  const matLeather = std({ color: 0x181818, roughness: 0.3 });
+  const matWall = std({ color: 0x383430, roughness: 0.85 });
+
+  makeBox(12, 0.1, 8, matCarpet, 0, 0, 0, g);
+  makeBox(12, 3.2, 0.15, matWall, 0, 1.6, -4.0, g);
+  makeBox(0.15, 3.2, 8, matWall, 6.0, 1.6, 0, g);
+
+  makeBox(6.0, 0.06, 1.2, matMahogany, 0, 0.75, -1.8, g);
+  makeBox(1.2, 0.06, 3.6, matMahogany, -2.4, 0.75, 0.4, g);
+  makeBox(1.2, 0.06, 3.6, matMahogany, 2.4, 0.75, 0.4, g);
+
+  for (const cx of [-2.4, -1.2, 0, 1.2, 2.4]) {
+    makeBox(0.55, 0.08, 0.55, matLeather, cx, 0.48, -2.6, g);
+    makeBox(0.55, 0.75, 0.08, matLeather, cx, 0.88, -2.9, g);
+  }
+
+  makeBox(2.2, 2.0, 0.04, std({ color: 0x8b0000 }), 0, 2.0, -3.92, g);
+  makeBox(4.5, 2.4, 0.6, std({ color: 0x1f242d }), 5.6, 1.2, 0, g);
+
+  makeLabel('STUDENT COUNCIL', 26 - 6.2, 3.2, -56, 0xffffff, 2.0);
+  grpAcademicNorth.add(g);
+}
+
+function buildSchoolCafeteria() {
+  const g = new THREE.Group();
+  g.position.set(62, 0, -20);
+  g.rotation.y = Math.PI / 2;
+
+  const matFloor = phys({ color: 0xe5d3b3, roughness: 0.15, clearcoat: 0.6 });
+  const matSteel = std({ color: 0xc6c9ce, roughness: 0.25, metalness: 0.9 });
+  const matTable = std({ color: 0xd6c49a, roughness: 0.5 });
+  const matWall = std({ color: 0xf2efe8, roughness: 0.9 });
+
+  makeBox(30, 0.1, 20, matFloor, 0, 0, 0, g);
+  makeBox(30, 5, 0.2, matWall, 0, 2.5, -10, g);
+  makeBox(0.2, 5, 20, matWall, 15, 2.5, 0, g);
+
+  makeBox(22, 1.1, 1.8, matSteel, 0, 0.55, -7.5, g);
+  makeBox(22, 0.05, 0.6, phys({ color: 0xffffff, transmission: 0.9 }), 0, 1.4, -6.8, g);
+
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 2; c++) {
+      const tx = -7 + c * 14, tz = -2 + r * 4.5;
+      makeBox(8, 0.06, 1.4, matTable, tx, 0.75, tz, g);
+      makeBox(8, 0.05, 0.45, matTable, tx, 0.45, tz - 1.1, g);
+      makeBox(8, 0.05, 0.45, matTable, tx, 0.45, tz + 1.1, g);
+    }
+  }
+
+  for (let v = 0; v < 4; v++) {
+    const col = [0xd63031, 0x0984e3, 0x00b894, 0x6c5ce7][v];
+    makeBox(1.2, 2.1, 0.9, std({ color: col }), -13 + v * 1.8, 1.05, 8.5, g);
+  }
+
+  addCollider(62, -20 - 15, 20, 1);
+  addCollider(62, -20 + 15, 20, 1);
+  addCollider(62 + 10, -20, 1, 30);
+  makeLabel('CAFETERIA', 62 - 8, 4.5, -20, 0xffffff, 2.2);
+
+  grpEastWing.add(g);
+}
+
+function buildGymnasium() {
+  const g = grpEastWing;
+  g.position.set(62, 0, 22);
+  g.rotation.y = Math.PI / 2;
+
+  const matCourt = phys({ map: tileTexture('#e3c08d', '#d9b37e', 16), roughness: 0.15, clearcoat: 0.6 });
+  const matConcrete = std({ color: 0x9a9da0, roughness: 0.9 });
+  const matTruss = std({ color: 0x8f979e, metalness: 0.7, roughness: 0.35 });
+  const matGlass = phys({ color: 0xdfeaf4, transmission: 0.85, roughness: 0.1 });
+
+  makeBox(25, 0.2, 35, matCourt, 0, 0, 0, g);
+
+  makeBox(25.4, 6.0, 0.4, matConcrete, 0, 3.0, -17.5, g);
+  makeBox(25.4, 6.0, 0.4, matConcrete, 0, 3.0, 17.5, g);
+  makeBox(0.4, 6.0, 35.4, matConcrete, -12.5, 3.0, 0, g);
+  makeBox(0.4, 6.0, 35.4, matConcrete, 12.5, 3.0, 0, g);
+
+  makeBox(25.2, 4.2, 0.1, matGlass, 0, 8.1, -17.5, g);
+  makeBox(25.2, 4.2, 0.1, matGlass, 0, 8.1, 17.5, g);
+  makeBox(0.1, 4.2, 35.2, matGlass, -12.5, 8.1, 0, g);
+  makeBox(0.1, 4.2, 35.2, matGlass, 12.5, 8.1, 0, g);
+
+  for (let z = -14; z <= 14; z += 7) {
+    makeBox(25, 0.8, 0.2, matTruss, 0, 10.4, z, g);
+  }
+
+  for (const s of [-1, 1]) {
+    makeBox(0.2, 4.2, 0.2, matTruss, 0, 2.1, s * 16.2, g);
+    makeBox(2.2, 1.4, 0.08, phys({ color: 0xffffff, transmission: 0.9 }), 0, 3.6, s * 14.8, g);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.03, 8, 16), std({ color: 0xe65100 }));
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(0, 3.05, s * 14.2);
+    g.add(rim);
+  }
+
+  for (let b = 0; b < 4; b++) {
+    makeBox(1.2, 0.45 * (b + 1), 28, matConcrete, -10.5 + b * 1.2, 0.225 * (b + 1), 0, g);
+  }
+
+  addCollider(62, 22 - 12.5, 35, 1);
+  addCollider(62, 22 + 12.5, 35, 1);
+  addCollider(62 + 17.5, 22, 1, 25);
+  makeLabel('GYMNASIUM', 62 - 12.5, 6.0, 22, 0xffffff, 2.2);
+}
+
+function buildAthleticsWest() {
+  const g = grpAthleticsWest;
+  g.position.set(-62, 0, 60);
+
+  const pitch = new THREE.Mesh(new THREE.PlaneGeometry(36, 24), std({ color: 0x5a9c42, roughness: 0.9 }));
+  pitch.rotation.x = -Math.PI / 2;
+  pitch.position.set(0, 0.02, 0);
+  g.add(pitch);
+
+  const track = new THREE.Mesh(new THREE.RingGeometry(18, 22, 32), std({ color: 0xc45c38, roughness: 0.8 }));
+  track.rotation.x = -Math.PI / 2;
+  track.position.set(0, 0.015, 0);
+  g.add(track);
+
+  for (const gz of [-10, 10]) {
+    makeBox(0.2, 3.0, 0.2, std({ color: 0xffffff }), -4, 1.5, gz, g);
+    makeBox(0.2, 3.0, 0.2, std({ color: 0xffffff }), 4, 1.5, gz, g);
+    makeBox(8.2, 0.2, 0.2, std({ color: 0xffffff }), 0, 3.0, gz, g);
+  }
+  makeLabel('SPORTS FIELD', -62, 4.5, 60 - 12, 0xffffff, 2.2);
+
+  const aqG = new THREE.Group();
+  aqG.position.set(0, 0, 32);
+
+  const matDeck = std({ map: tileTexture('#b7d4ec', '#e9f2fa', 8), roughness: 0.2 });
+  makeBox(26, 0.2, 44, matDeck, 0, 0, 0, aqG);
+
+  const poolFloor = new THREE.Mesh(new THREE.PlaneGeometry(20, 38), std({ map: tileTexture('#2882b8', '#1c6fa3', 10), roughness: 0.4 }));
+  poolFloor.rotation.x = -Math.PI / 2;
+  poolFloor.position.set(0, -2.0, 0);
+  aqG.add(poolFloor);
+
+  waterUniforms = {
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color(0x00a88f) },
+    uDeep: { value: new THREE.Color(0x024a3c) }
+  };
+  const waterMat = new THREE.ShaderMaterial({
+    uniforms: waterUniforms,
+    transparent: true,
+    opacity: 0.85,
+    vertexShader: `
+      uniform float uTime;
+      varying vec3 vWorldPos;
+      void main() {
+        vec3 p = position;
+        p.z += sin(p.x * 0.4 + uTime * 1.5) * 0.04 + cos(p.y * 0.3 + uTime * 1.2) * 0.04;
+        vec4 wp = modelMatrix * vec4(p, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColor;
+      uniform vec3 uDeep;
+      varying vec3 vWorldPos;
+      void main() {
+        gl_FragColor = vec4(mix(uDeep, uColor, 0.65), 0.82);
+      }
+    `
+  });
+  const waterMesh = new THREE.Mesh(new THREE.PlaneGeometry(20, 38), waterMat);
+  waterMesh.rotation.x = -Math.PI / 2;
+  waterMesh.position.set(0, -0.05, 0);
+  aqG.add(waterMesh);
+
+  const towerMat = std({ color: 0xd8dde4, roughness: 0.4 });
+  makeBox(2.2, 10.5, 3.2, towerMat, 0, 5.25, -17.5, aqG);
+  makeBox(2.6, 0.2, 4.5, towerMat, 0, 10.5, -16, aqG);
+  makeBox(2.2, 0.2, 3.8, towerMat, -2.4, 5.0, -16.5, aqG);
+  makeBox(2.2, 0.2, 3.5, towerMat, 2.4, 3.0, -16.5, aqG);
+
+  addCollider(-62, 92 - 17.5, 3, 3);
+  makeLabel('AQUATIC CENTER', -62, 5.5, 92 - 14, 0xffffff, 2.2);
+
+  g.add(aqG);
+}
+
+function buildResidentialSector() {
+  const g = grpResidentialSW;
+  g.position.set(-34, 0, 58);
+
+  const matConcrete = std({ map: tileTexture('#e2e8f0', '#cbd5e1', 4), roughness: 0.5 });
+  const matBalconyGlass = phys({ color: 0x94a3b8, transmission: 0.7, roughness: 0.2 });
+  const matDarkGlass = phys({ color: 0x1e293b, transmission: 0.3, roughness: 0.2 });
+
+  const FLOORS = 15, FH = 3.2;
+  const TOWER_H = FLOORS * FH;
+
+  makeBox(24, TOWER_H, 24, matConcrete, 0, TOWER_H / 2, 0, g);
+
+  const COLS = [-6.5, 0, 6.5];
+  for (let f = 1; f < FLOORS; f++) {
+    const y = f * FH;
+    for (const cx of COLS) {
+      makeBox(4.4, 0.14, 1.5, matConcrete, cx, y, 12.8, g);
+      makeBox(4.4, 1.1, 0.05, matBalconyGlass, cx, y + 0.6, 13.5, g);
+      makeBox(4.2, 2.2, 0.05, matDarkGlass, cx, y + 1.1, 12.0, g);
+
+      makeBox(4.4, 0.14, 1.5, matConcrete, cx, y, -12.8, g);
+      makeBox(4.4, 1.1, 0.05, matBalconyGlass, cx, y + 0.6, -13.5, g);
+      makeBox(4.2, 2.2, 0.05, matDarkGlass, cx, y + 1.1, -12.0, g);
+
+      makeBox(1.5, 0.14, 4.4, matConcrete, 12.8, y, cx, g);
+      makeBox(0.05, 1.1, 4.4, matBalconyGlass, 13.5, y + 0.6, cx, g);
+      makeBox(0.05, 2.2, 4.2, matDarkGlass, 12.0, y + 1.1, cx, g);
+
+      makeBox(1.5, 0.14, 4.4, matConcrete, -12.8, y, cx, g);
+      makeBox(0.05, 1.1, 4.4, matBalconyGlass, -13.5, y + 0.6, cx, g);
+      makeBox(0.05, 2.2, 4.2, matDarkGlass, -12.0, y + 1.1, cx, g);
+    }
+  }
+
+  makeBox(28, 4.0, 28, matConcrete, 0, 2.0, 0, g);
+  makeBox(14, 3.2, 0.1, phys({ color: 0xffffff, transmission: 0.9 }), 0, 1.6, -14.1, g);
+
+  for (const bx of [-18, 18]) {
+    makeBox(8, 2.6, 3.5, std({ color: 0x475569, metalness: 0.7 }), bx, 1.3, -10, g);
+  }
+
+  const r401 = new THREE.Group();
+  r401.position.set(-16, 0, 0);
+
+  const matTatami = std({ color: 0xb5a67c, roughness: 0.9 });
+  const matWood = std({ color: 0x7c5332, roughness: 0.6 });
+  const matSheet = std({ color: 0xf8fafc, roughness: 0.85 });
+
+  makeBox(6, 0.08, 6, matTatami, 0, 0.04, 0, r401);
+  makeBox(6, 2.8, 0.1, std({ color: 0xf1f5f9 }), 0, 1.4, -3.0, r401);
+  makeBox(0.1, 2.8, 6, std({ color: 0xf1f5f9 }), -3.0, 1.4, 0, r401);
+
+  makeBox(1.2, 0.4, 2.2, matWood, 1.8, 0.2, -1.5, r401);
+  makeBox(1.15, 0.18, 2.1, matSheet, 1.8, 0.48, -1.5, r401);
+  makeBox(1.6, 0.75, 0.8, matWood, -1.8, 0.375, -1.8, r401);
+  makeBox(0.4, 0.02, 0.3, std({ color: 0x1e293b, metalness: 0.9 }), -1.8, 0.76, -1.8, r401);
+
+  makeBox(3.2, 0.1, 1.6, std({ color: 0x94a3b8 }), 0, 0.05, 3.8, r401);
+  makeBox(3.2, 1.1, 0.05, phys({ color: 0xdbeafe, transmission: 0.85 }), 0, 0.6, 4.6, r401);
+
+  addCollider(-34 - 14, 58, 1, 28);
+  addCollider(-34 + 14, 58, 1, 28);
+  addCollider(-34, 58 + 14, 28, 1);
+  addCollider(-34 - 10, 58 - 14, 8, 1);
+  addCollider(-34 + 10, 58 - 14, 8, 1);
+
+  makeLabel('DORMITORY TOWER', -34, 20.0, 58 - 14.5, 0xffffff, 2.8);
+  makeLabel('ROOM 401', -50, 3.2, 58, 0xffffff, 1.8);
+
+  g.add(r401);
+}
+
+function buildCommercialSector() {
+  const g = grpCommercialSE;
+
+  const sivG = new THREE.Group();
+  sivG.position.set(34, 0, 54);
+
+  const matFloor = std({ map: tileTexture('#374151', '#1f2937', 8), roughness: 0.3 });
+  const matCase = phys({ color: 0xffffff, transmission: 0.85, roughness: 0.1 });
+  const matTech = std({ color: 0x111827, metalness: 0.85, roughness: 0.2 });
+  const matCCTV = std({ color: 0xffffff, emissive: 0xef4444, emissiveIntensity: 1.8 });
+  const matSignSIV = std({ map: textSignTexture('SIVCAMERA', 140, '#38BDF8', '#081B2E'), emissive: 0xffffff, emissiveIntensity: 0.8 });
+
+  makeBox(12, 0.1, 10, matFloor, 0, 0.05, 0, sivG);
+  makeBox(12, 4.0, 0.14, std({ color: 0x22262d }), 0, 2.0, 5.0, sivG);
+
+  makeBox(1.2, 1.0, 4.5, matCase, -2.4, 0.5, 0, sivG);
+  makeBox(4.5, 2.2, 0.4, matTech, 0, 1.1, 4.7, sivG);
+  for (let i = -1.5; i <= 1.5; i += 1.0) {
+    const cam = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), matCCTV);
+    cam.position.set(i, 1.7, 4.4);
+    sivG.add(cam);
+  }
+  makeBox(7.5, 1.4, 0.1, matSignSIV, 0, 4.2, -5.0, sivG);
+  addCollider(34, 54 + 5.0, 12, 1);
+  addCollider(34 - 6.0, 54, 1, 10);
+  addCollider(34 + 6.0, 54, 1, 10);
+  g.add(sivG);
+
+  const cafeG = new THREE.Group();
+  cafeG.position.set(54, 0, 54);
+
+  const matWood = std({ color: 0x6e4a2c, roughness: 0.6 });
+  const matPink = std({ color: 0xf472b6, roughness: 0.5 });
+  const matSignCafe = std({ map: textSignTexture('Palette Cafe', 130, '#F472B6', '#1E1B2E'), emissive: 0xffffff, emissiveIntensity: 0.8 });
+
+  makeBox(12, 0.1, 10, std({ map: tileTexture('#e5e7eb', '#d1d5db', 8), roughness: 0.4 }), 0, 0.05, 0, cafeG);
+  makeBox(7.5, 1.1, 1.4, matWood, -1.8, 0.55, 3.2, cafeG);
+  makeBox(1.2, 0.8, 0.8, std({ color: 0x222222, metalness: 0.8 }), -1.8, 1.5, 3.2, cafeG);
+
+  for (const cx of [-2.4, 2.4]) {
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 0.05, 16), matWood);
+    top.position.set(cx, 0.75, -1.0);
+    cafeG.add(top);
+    makeBox(0.42, 0.45, 0.42, matPink, cx - 0.7, 0.225, -1.0, cafeG);
+    makeBox(0.42, 0.45, 0.42, matPink, cx + 0.7, 0.225, -1.0, cafeG);
+  }
+  makeBox(7.2, 1.5, 0.1, matSignCafe, 0, 4.2, -5.0, cafeG);
+  addCollider(54, 54 + 5.0, 12, 1);
+  addCollider(54 - 6.0, 54, 1, 10);
+  addCollider(54 + 6.0, 54, 1, 10);
+  g.add(cafeG);
+
+  const mallG = new THREE.Group();
+  mallG.position.set(44, 0, 78);
+
+  const M = {
+    concreteDark: std({ color: 0x3a3f47, roughness: 0.5 }),
+    chrome: std({ color: 0xd0d5dd, roughness: 0.2, metalness: 0.9 }),
+    glass: phys({ color: 0x9ec0db, transmission: 0.9, roughness: 0.1, ior: 1.5 }),
+    signGold: std({ map: textSignTexture('KEYAKI MALL', 120), emissive: 0xffffff, emissiveIntensity: 0.8 })
+  };
+
+  const BLD = { L: 52, D: 28, H: 18, tiers: 3 };
+
+  for (let k = 0; k <= BLD.tiers; k++) {
+    makeBox(BLD.L, 0.5, BLD.D, M.concreteDark, 0, 6.0 * k + 0.25, 0, mallG);
+  }
+
+  const bays = 8, bayW = BLD.L / bays;
+  for (let t = 0; t < BLD.tiers; t++) {
+    for (let b = 0; b < bays; b++) {
+      const bx = -BLD.L / 2 + bayW * (b + 0.5);
+      makeBox(bayW - 0.15, 5.5, 0.05, M.glass, bx, 3.2 + 6.0 * t, -BLD.D / 2, mallG, false);
+      makeBox(bayW - 0.15, 5.5, 0.05, M.glass, bx, 3.2 + 6.0 * t, BLD.D / 2, mallG, false);
+    }
+  }
+
+  const pyrGeo = new THREE.ConeGeometry(14 * Math.SQRT2, 9, 4, 1, true);
+  const pyrMesh = new THREE.Mesh(pyrGeo, M.glass);
+  pyrMesh.position.y = BLD.H + 4.5;
+  pyrMesh.rotation.y = Math.PI / 4;
+  mallG.add(pyrMesh);
+
+  makeBox(18, 0.35, 5, M.concreteDark, 0, 5.4, -BLD.D / 2 - 2.5, mallG);
+  makeBox(12, 2.2, 0.2, M.signGold, 0, 5.0, -BLD.D / 2 - 2.7, mallG);
+
+  const karaG = new THREE.Group();
+  karaG.position.set(12, 0.1, 4);
+  makeBox(5.5, 0.5, 1.2, std({ color: 0x7c2d12 }), 0, 0.25, 2.0, karaG);
+  makeBox(3.0, 0.4, 1.2, phys({ color: 0x050508, transmission: 0.6 }), 0, 0.2, 0.2, karaG);
+  makeBox(3.8, 2.0, 0.08, std({ color: 0x000000, emissive: 0x38bdf8, emissiveIntensity: 0.8 }), 0, 1.6, -3.2, karaG);
+  mallG.add(karaG);
+
+  addCollider(44, 78 + 14, 52, 1);
+  addCollider(44 - 26, 78, 1, 28);
+  addCollider(44 + 26, 78, 1, 28);
+  addCollider(44 - 18, 78 - 14, 16, 1);
+  addCollider(44 + 18, 78 - 14, 16, 1);
+
+  g.add(mallG);
+}
+
+function buildMainEntrance() {
+  const g = new THREE.Group();
+  g.position.set(0, 0, 95);
+
+  const matStone = std({ color: 0x94a3b8, roughness: 0.6 });
+
+  makeBox(2.0, 6.0, 2.0, matStone, -14, 3.0, 0, g);
+  makeBox(2.0, 6.0, 2.0, matStone, 14, 3.0, 0, g);
+  makeBox(30, 1.0, 1.0, matStone, 0, 6.2, 0, g);
+  makeBox(4.2, 1.8, 0.3, std({ map: textSignTexture('ANHS HIGH SCHOOL', 90, '#FFFFFF', '#0F172A') }), 0, 7.5, 0, g);
+
+  addCollider(-14, 95, 2.2, 2.2);
+  addCollider(14, 95, 2.2, 2.2);
+
+  const busG = new THREE.Group();
+  busG.position.set(-10, 0, 6);
+  makeBox(9, 3.2, 2.6, std({ color: 0xded4c0 }), 0, 1.6, 0, busG);
+  makeBox(8, 1.2, 2.5, std({ color: 0x2b3242 }), 0, 2.3, 0.05, busG);
+  makeBox(9.05, 0.6, 2.65, std({ color: 0x2b4a8a }), 0, 0.5, 0, busG);
+  addCollider(-10, 101, 9.2, 2.8);
+  g.add(busG);
+
+  makeLabel('FRONT GATE', 0, 7.8, 95, 0xffffff, 2.8);
+  makeLabel('🚌 BUS', -10, 3.8, 101, 0xffffff, 2.0);
+
+  grpGround.add(g);
+}
+
+function buildSeasideBoulevard() {
+  const g = grpSeasideNorth;
+  g.position.set(0, 0, -145);
+
+  const matBrick = std({ map: brickTexture(), roughness: 0.6 });
+  const matRock = std({ map: noiseTexture('#475569', ['#334155', '#1e293b'], 1000, 10), roughness: 0.95 });
+  const matIron = std({ color: 0x0f172a, roughness: 0.3, metalness: 0.85 });
+
+  const boardwalk = new THREE.Mesh(new THREE.PlaneGeometry(280, 8), matBrick);
+  boardwalk.rotation.x = -Math.PI / 2;
+  boardwalk.position.set(0, 0.04, 0);
+  boardwalk.receiveShadow = true;
+  g.add(boardwalk);
+
+  makeBox(280, 3.5, 4, matRock, 0, -1.75, -5.5, g);
+  addCollider(0, -145 - 4.5, 280, 2.0);
+
+  for (let x = -138; x <= 138; x += 3) {
+    makeBox(0.08, 1.1, 0.08, matIron, x, 0.55, -3.8, g);
+  }
+  makeBox(280, 0.06, 0.06, matIron, 0, 1.1, -3.8, g);
+
+  for (let x = -120; x <= 120; x += 30) {
+    makeBox(0.2, 4.5, 0.2, matIron, x, 2.25, 2.5, g);
+    makeBox(0.6, 0.12, 0.3, std({ color: 0xffffff, emissive: 0xfff3d4, emissiveIntensity: 1.5 }), x, 4.5, 2.5, g);
+    makeBox(2.2, 0.45, 0.7, std({ color: 0x4a3a28 }), x + 6, 0.225, 1.8, g);
+  }
+
+  oceanUniforms = {
+    uTime: { value: 0 },
+    uDeep: { value: new THREE.Color(0x003f5c) },
+    uShallow: { value: new THREE.Color(0x2f899e) }
+  };
+  const oceanMat = new THREE.ShaderMaterial({
+    uniforms: oceanUniforms,
+    side: THREE.DoubleSide,
+    vertexShader: `
+      uniform float uTime;
+      varying vec3 vWorldPos;
+      void main() {
+        vec3 p = position;
+        p.z += sin(p.x * 0.06 + uTime * 0.8) * 0.4 + cos(p.y * 0.05 + uTime * 0.6) * 0.3;
+        vec4 wp = modelMatrix * vec4(p, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uDeep;
+      uniform vec3 uShallow;
+      varying vec3 vWorldPos;
+      void main() {
+        gl_FragColor = vec4(mix(uDeep, uShallow, 0.6), 0.95);
+      }
+    `
+  });
+  const oceanMesh = new THREE.Mesh(new THREE.PlaneGeometry(360, 100), oceanMat);
+  oceanMesh.rotation.x = -Math.PI / 2;
+  oceanMesh.position.set(0, -3.2, -50);
+  g.add(oceanMesh);
+
+  makeLabel('SEASIDE PROMENADE', 0, 3.5, -143, 0xffffff, 2.5);
+}
+
+// Assemble campus architecture
 buildCampusFoundation();
 buildCentralPark();
 buildAcademicBuilding();
@@ -901,6 +1633,7 @@ function animateRig(rig, a, dt) {
   const mode = a.mode || 'idle';
 
   if (a.moving) {
+    // Locomotion
     const p = a.phase, s = Math.sin(p), c = Math.cos(p);
     const stride = a.run ? 1.25 : 1;
     rig.hips.position.y = 0.92 + Math.abs(Math.sin(p * 2)) * 0.026;
@@ -918,6 +1651,7 @@ function animateRig(rig, a, dt) {
     rig.torso.rotation.z = c * 0.02;
     rig.body.rotation.z = s * 0.015;
   } else if (mode === 'sit_desk') {
+    // Seated Desk Pose (Classroom study / note writing)
     rig.hips.position.y += (0.48 - rig.hips.position.y) * damp;
     lerpTo(rig.legL, 'x', -1.57); lerpTo(rig.legR, 'x', -1.57);
     lerpTo(rig.kneeL, 'x', 1.57); lerpTo(rig.kneeR, 'x', 1.57);
@@ -930,6 +1664,7 @@ function animateRig(rig, a, dt) {
     lerpTo(rig.elbowR, 'x', -0.9 + write);
     rig.face.mouth.scale.y += (1 - rig.face.mouth.scale.y) * damp;
   } else if (mode === 'teach_lecture') {
+    // Teacher podium lecturing pose
     rig.hips.position.y += (0.92 - rig.hips.position.y) * damp;
     for (const j of ['legL', 'legR', 'kneeL', 'kneeR', 'footL', 'footR']) lerpTo(rig[j], 'x', 0);
     lerpTo(rig.armL, 'x', -0.5); lerpTo(rig.elbowL, 'x', -0.7);
@@ -938,6 +1673,7 @@ function animateRig(rig, a, dt) {
     lerpTo(rig.elbowR, 'x', -0.8 + swing * 0.5);
     rig.face.mouth.scale.y = 1 + Math.abs(Math.sin(a.idleT * 3)) * 1.4;
   } else if (mode === 'sit_eat') {
+    // Seated Dining / Eating Pose
     rig.hips.position.y += (0.48 - rig.hips.position.y) * damp;
     lerpTo(rig.legL, 'x', -1.57); lerpTo(rig.legR, 'x', -1.57);
     lerpTo(rig.kneeL, 'x', 1.57); lerpTo(rig.kneeR, 'x', 1.57);
@@ -947,14 +1683,16 @@ function animateRig(rig, a, dt) {
     lerpTo(rig.elbowR, 'x', -1.2 + eatCycle * 0.4);
     rig.face.mouth.scale.y = 1 + Math.abs(Math.sin(a.idleT * 4.5)) * 1.5;
   } else if (mode === 'sit_read') {
+    // Library Book Reading Pose
     rig.hips.position.y += (0.48 - rig.hips.position.y) * damp;
     lerpTo(rig.legL, 'x', -1.57); lerpTo(rig.legR, 'x', -1.57);
     lerpTo(rig.kneeL, 'x', 1.57); lerpTo(rig.kneeR, 'x', 1.57);
     lerpTo(rig.torso, 'x', 0.12);
     lerpTo(rig.armL, 'x', -0.45); lerpTo(rig.armR, 'x', -0.45);
     lerpTo(rig.elbowL, 'x', -1.0); lerpTo(rig.elbowR, 'x', -1.0);
-    lerpTo(rig.head, 'x', 0.35);
+    lerpTo(rig.head, 'x', 0.35); // Look down at book
   } else if (mode === 'sport_drill') {
+    // Athletic Court / Field Practice
     rig.hips.position.y += (0.85 - rig.hips.position.y) * damp;
     lerpTo(rig.legL, 'x', -0.2); lerpTo(rig.legR, 'x', 0.2);
     lerpTo(rig.kneeL, 'x', 0.4); lerpTo(rig.kneeR, 'x', 0.4);
@@ -962,9 +1700,10 @@ function animateRig(rig, a, dt) {
     lerpTo(rig.armR, 'x', -0.3 + dribble); lerpTo(rig.elbowR, 'x', -0.7 + dribble);
     lerpTo(rig.armL, 'x', -0.2); lerpTo(rig.elbowL, 'x', -0.4);
   } else {
+    // Default Idle
     for (const j of ['legL', 'legR', 'kneeL', 'kneeR', 'armL', 'armR', 'footL', 'footR']) lerpTo(rig[j], 'x', 0);
     lerpTo(rig.elbowL, 'x', -0.16); lerpTo(rig.elbowR, 'x', -0.16);
-    lerpTo(rig.torso, 'x', 0); lerpTo(rig.torso, 'y', 0);
+    lerpTo(rig.torso, 'x', 0); lerpTo(rig.torso, 'y', 0); lerpTo(rig.hips, 'y', 0);
     const breathe = Math.sin(a.idleT * 1.5) * 0.008;
     rig.hips.position.y += (0.92 + breathe - rig.hips.position.y) * damp;
     const shift = Math.sin(a.idleT * 0.42);
@@ -988,6 +1727,40 @@ function animateRig(rig, a, dt) {
     rig.head.rotation.x += (Math.max(-0.5, Math.min(0.5, wantX)) - rig.head.rotation.x) * Math.min(1, dt * 5);
   }
 }
+
+// ---------- Speech Bubbles ----------
+function makeBubble() {
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, opacity: 0 }));
+  spr.visible = false; scene.add(spr); return spr;
+}
+function setBubbleText(spr, text) {
+  const c = document.createElement('canvas'), pad = 22;
+  const ctx = c.getContext('2d'); ctx.font = 'bold 30px Segoe UI, sans-serif';
+  const words = text.split(' '); const lines = []; let cur = '';
+  for (const w of words) { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > 420 && cur) { lines.push(cur); cur = w; } else cur = t; }
+  if (cur) lines.push(cur);
+  const lh = 38, wMax = Math.max(...lines.map(l => ctx.measureText(l).width));
+  c.width = Math.ceil(wMax + pad * 2); c.height = lines.length * lh + pad * 2 + 14;
+  const x = c.getContext('2d'); x.font = 'bold 30px Segoe UI, sans-serif';
+  x.fillStyle = 'rgba(252,252,255,0.96)'; x.strokeStyle = 'rgba(30,34,44,0.9)'; x.lineWidth = 3;
+  roundRect(x, 2, 2, c.width - 4, c.height - 18, 18); x.fill(); x.stroke();
+  x.beginPath(); x.moveTo(c.width / 2 - 12, c.height - 18); x.lineTo(c.width / 2, c.height - 3); x.lineTo(c.width / 2 + 12, c.height - 18);
+  x.closePath(); x.fill(); x.stroke();
+  x.fillStyle = '#1a1d26'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  lines.forEach((l, i) => x.fillText(l, c.width / 2, pad + lh * i + lh / 2));
+  if (spr.material.map) spr.material.map.dispose();
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  spr.material.map = tex; spr.material.needsUpdate = true;
+  spr.scale.set(c.width / 190, c.height / 190, 1);
+}
+function say(npc, text, ms = 3600) {
+  if (!npc.bubble) npc.bubble = makeBubble();
+  setBubbleText(npc.bubble, text);
+  npc.bubble.visible = true; npc.bubble.material.opacity = 1;
+  npc.bubbleUntil = clock.elapsedTime + ms / 1000;
+  if (playerDist(npc) < 18) speakAs(npc.name, text, 1, npc);
+}
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 // =========================================================================
 // PURPOSE-DRIVEN NPC ROSTER & PERSONALITY SYSTEM
@@ -1020,6 +1793,7 @@ function createStudentNPC(id, name, persona, traits, assignedSeat, cfg) {
     currentSpot: cfg.spawnLoc || 'gate',
     targetSpotId: null,
     targetSpot: null,
+    // State machine
     state: 'SPAWN',
     currentActivity: 'ARRIVING_AT_SCHOOL',
     activityReason: 'Arriving on the morning school bus.',
@@ -1045,7 +1819,7 @@ function createStudentNPC(id, name, persona, traits, assignedSeat, cfg) {
 createStudentNPC('horikita', 'Horikita',
   'Horikita Suzune — reserved, direct, serious, determined to reach Class A. Quietly observant, dry warmth.',
   { intelligence: 0.98, discipline: 0.95, athleticism: 0.60, social: 0.15, curiosity: 0.85 },
-  'CLASS_1D_SEAT_13',
+  'CLASS_1D_SEAT_13', // Center desk beside Ayanokouji (Seat 14)
   {
     hair: 0x15151f, hairStyle: 'long', gender: 'f', skin: 0xf3d0b3, tie: 0x8a2b3a, height: 0.97,
     spawnLoc: 'gate', speed: 2.4, preferredActivities: ['LIBRARY', 'STUDY', 'COURTYARD'],
@@ -1090,7 +1864,7 @@ createStudentNPC('sudou', 'Sudou',
 createStudentNPC('kouenji', 'Kouenji',
   'Kouenji Rokusuke — wealthy heir, narcissistic, lounging.',
   { intelligence: 0.88, discipline: 0.15, athleticism: 0.92, social: 0.10, curiosity: 0.50 },
-  'CLASS_1D_SEAT_25',
+  'CLASS_1D_SEAT_25', // Window back corner
   {
     hair: 0xd9b44a, hairStyle: 'slick', gender: 'm', skin: 0xf1c9a5, tie: 0x2b4a8a, height: 1.05,
     spawnLoc: 'gate', speed: 2.2, preferredActivities: ['PALETTE_CAFE', 'COURTYARD', 'SIV_STORE', 'DORMITORY', 'SEASIDE'],
@@ -1117,7 +1891,7 @@ createStudentNPC('chabashira', 'Chabashira',
   }
 );
 
-// 2. Additional Class 1-D Classmates
+// 2. Additional Class 1-D Classmate Cohort
 const COHORT = [
   { id: 'hirata', name: 'Hirata', traits: { intelligence: 0.82, discipline: 0.90, athleticism: 0.85, social: 0.92 }, seat: 'CLASS_1D_SEAT_11', act: ['CAFETERIA', 'COURTYARD', 'SPORTS_FIELD'], hair: 0x6b4f3b, hairStyle: 'medium', gender: 'm' },
   { id: 'karuizawa', name: 'Karuizawa', traits: { intelligence: 0.55, discipline: 0.50, athleticism: 0.40, social: 0.95 }, seat: 'CLASS_1D_SEAT_17', act: ['KEYAKI_MALL', 'PALETTE_CAFE'], hair: 0xe0a96d, hairStyle: 'long', gender: 'f' },
@@ -1188,6 +1962,7 @@ function evaluateNPCPurpose(npc, evt) {
     }
 
     case 'LUNCH': {
+      // Find a cafeteria table seat
       ReservationManager.releaseAllForNPC(npc.id);
       const cafSpot = ReservationManager.findAvailableSpot('cafeteria', 'dining_seat');
       if (cafSpot) {
@@ -1264,12 +2039,14 @@ function routeNPCToSpot(npc, destLoc, spotId) {
   npc._skips = 0;
 }
 
+// Steering and Obstacle/Crowd Avoidance
 function planar(ax, az, bx, bz) { return Math.hypot(ax - bx, az - bz); }
 
 function computeAvoidance(npc, vx, vz) {
   let ax = 0, az = 0;
   const p = npc.rig.root.position;
 
+  // Separate from other NPCs
   for (const o of npcs) {
     if (o === npc) continue;
     const op = o.rig.root.position;
@@ -1281,6 +2058,7 @@ function computeAvoidance(npc, vx, vz) {
     }
   }
 
+  // Separate from player
   const pd = planar(p.x, p.z, camera.position.x, camera.position.z);
   if (pd > 0.01 && pd < 1.6) {
     const pf = (1.6 - pd) / 1.6;
@@ -1296,6 +2074,7 @@ function stepNPCToTarget(npc, tx, tz, dt, isFinal = false) {
   let dx = tx - p.x, dz = tz - p.z;
   const dist = Math.hypot(dx, dz);
 
+  // Arrival threshold
   const arrivalDist = isFinal ? 0.35 : 0.65;
   if (dist < arrivalDist) {
     npc.anim.moving = false;
@@ -1329,6 +2108,7 @@ function stepNPCToTarget(npc, tx, tz, dt, isFinal = false) {
   } else {
     npc._stuckTime = (npc._stuckTime || 0) + dt;
     if (npc._stuckTime > 3.5) {
+      // Advance waypoint to prevent being trapped
       npc._stuckTime = 0;
       return true;
     }
@@ -1339,6 +2119,7 @@ function stepNPCToTarget(npc, tx, tz, dt, isFinal = false) {
   return false;
 }
 
+// Update Individual NPC Lifecycle & Animation State
 function updateNPCBehavior(npc, dt, elapsed) {
   const p = npc.rig.root.position;
   npc.label.position.set(p.x, 2.05, p.z);
@@ -1346,6 +2127,7 @@ function updateNPCBehavior(npc, dt, elapsed) {
   npc.anim.idleT += dt;
   npc.anim.talk = npc.speaking === true || activeNPC === npc;
 
+  // Look-at behavior
   const dPlayer = planar(p.x, p.z, camera.position.x, camera.position.z);
   if (dPlayer < 9 && !npc.targetSpot) {
     const world = Math.atan2(camera.position.x - p.x, camera.position.z - p.z);
@@ -1357,12 +2139,14 @@ function updateNPCBehavior(npc, dt, elapsed) {
     npc.anim.lookAt = null;
   }
 
+  // Active dialogue takes priority
   if (activeNPC === npc) {
     npc.anim.moving = false;
     npc.anim.mode = 'idle';
     const dx = camera.position.x - p.x, dz = camera.position.z - p.z;
     npc.facing = Math.atan2(dx, dz);
   } else if (npc.path && npc.path.length > 0 && npc.pathI < npc.path.length) {
+    // Traveling to Destination Waypoints
     const isLast = npc.pathI === npc.path.length - 1;
     const wp = npc.path[npc.pathI];
     npc.anim.mode = 'idle';
@@ -1370,11 +2154,13 @@ function updateNPCBehavior(npc, dt, elapsed) {
     if (stepNPCToTarget(npc, wp.x, wp.z, dt, isLast)) {
       npc.pathI++;
       if (npc.pathI >= npc.path.length) {
+        // Arrived at destination!
         npc.anim.moving = false;
         npc.path = [];
         npc.currentSpot = npc._destLoc || npc.currentSpot;
         if (wp.facing !== undefined) npc.facing = wp.facing;
 
+        // Transition to arrived activity state
         if (npc.state === 'GOING_TO_CLASS') {
           npc.state = npc.role === 'teacher' ? 'TEACHING_CLASS' : 'IN_CLASS';
         } else if (npc.state === 'GOING_TO_LUNCH') {
@@ -1389,6 +2175,7 @@ function updateNPCBehavior(npc, dt, elapsed) {
       }
     }
   } else {
+    // Performing Current Activity
     npc.anim.moving = false;
     if (npc.state === 'IN_CLASS') npc.anim.mode = 'sit_desk';
     else if (npc.state === 'TEACHING_CLASS') npc.anim.mode = 'teach_lecture';
@@ -1406,6 +2193,7 @@ function updateNPCBehavior(npc, dt, elapsed) {
   animateRig(npc.rig, npc.anim, dt);
 }
 
+// Master Schedule Tick Manager
 let currentScheduleEvent = null;
 
 function updateSchoolScheduleSystem() {
@@ -1603,7 +2391,7 @@ function updateSceneLabel() {
 // ---------- Simulation Clock & Render Loop ----------
 const DAY_REAL_MIN = 20;
 const MIN_PER_SEC = 1440 / (DAY_REAL_MIN * 60);
-let clockMin = 7.75 * 60;
+let clockMin = 7.75 * 60; // 07:45 Morning Arrival
 let gameDay = load('cote3dDay', 1);
 const clockChip = document.createElement('div');
 clockChip.style.cssText = 'background:rgba(13,16,24,.88);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:13px;backdrop-filter:blur(10px);font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.5);';
@@ -1647,6 +2435,7 @@ function animate() {
     else { const dir = new THREE.Vector3(-Math.sin(savedYaw) * Math.cos(savedPitch), Math.sin(savedPitch), -Math.cos(savedYaw) * Math.cos(savedPitch)); camLook.lerp(camera.position.clone().add(dir), Math.min(1, dt * 5)); camera.lookAt(camLook); }
   }
 
+  // School Routine & NPC Update
   const prevMin = clockMin;
   clockMin = (clockMin + dt * MIN_PER_SEC) % (24 * 60);
   if (clockMin < prevMin) { gameDay++; save('cote3dDay', gameDay); }
@@ -1843,33 +2632,29 @@ $('story-continue').onclick = () => { storyEl.style.display = 'none'; };
 $('story-next').onclick = nextScene;
 $('next-scene-btn').onclick = () => { storyEl.style.display = 'flex'; nextScene(); };
 
-// ---------- Start / Reset & Global Expose ----------
-window.beginGame = function(mode) {
+// ---------- Start / Reset ----------
+function begin(mode) {
   const k = keyInput.value.trim();
   if (mode !== 'explore') { if (k) { apiKey = k; localStorage.setItem('naraApiKey', apiKey); } canTalk = !!apiKey; }
   else canTalk = false;
   overlay.style.display = 'none';
-  try { if (cv.requestPointerLock) cv.requestPointerLock(); } catch (e) { console.warn(e); }
+  if (cv.requestPointerLock) { try { cv.requestPointerLock(); } catch {} }
   if (mode === 'story') { camera.position.set(0, EYE, 95); yaw = 0; enterScene(story.i >= 0 ? story.i : 0); }
   else { camera.position.set(0, EYE, 40); yaw = 0; updateObjective(); }
-};
-
-window.resetGameData = function() {
+}
+$('story-btn').onclick = () => begin('story');
+$('enter-btn').onclick = () => begin('free');
+$('explore-btn').onclick = () => begin('explore');
+$('reset-btn').onclick = () => {
   if (!confirm('Erase all progress — conversations, story, and stats?')) return;
   ['cote3dStats', 'cote3dConvos', 'cote3dStory', 'cote3dStoryConvo', 'cote3dSocial', 'cote3dDay'].forEach(k => localStorage.removeItem(k));
   location.reload();
 };
 
-$('story-btn').onclick = () => window.beginGame('story');
-$('enter-btn').onclick = () => window.beginGame('free');
-$('explore-btn').onclick = () => window.beginGame('explore');
-$('reset-btn').onclick = window.resetGameData;
-keyInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') window.beginGame('free'); });
-
 updateObjective();
 updateSchoolScheduleSystem();
 animate();
-</script>
 
+</script>
 </body>
 </html>
