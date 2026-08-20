@@ -144,6 +144,9 @@ public class CampusGraph {
         addEdge("eNorth", "mallA"); addEdge("mallA", "mallDoor");
         addEdge("eNorth", "gymA"); addEdge("eNorth", "gymNorthCorr");
         addEdge("eNorth", "eastPromenadeN"); addEdge("eastPromenadeN", "gymA");
+
+        addEdge("dormA", "dormDoor"); addEdge("dormDoor", "dormLobby");
+        addEdge("dormLobby", "roomDoor"); addEdge("roomDoor", "roomA");
     }
 
     private static void addEdge(String a, String b) {

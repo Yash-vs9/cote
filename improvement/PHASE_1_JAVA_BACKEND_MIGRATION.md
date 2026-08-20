@@ -143,3 +143,21 @@ This document outlines the complete technical specification, architectural desig
 - [ ] **Task 1.6: Update Launch Scripts & Documentation**
   - Update `compile_and_run.bat` and `compile_and_run.sh` to use Maven when available.
   - Verify that opening `http://localhost:8080/index.html` loads the Master Portal and all games without Node.js.
+
+---
+
+## 4. Subsystem 4: Java 2D Swing Visualizer (Graphics in Java)
+
+### A. What Should Be Changed
+- Implement a Java Swing `JFrame` window that renders a top-down 2D map of the campus graph, drawing all nodes, edges, and real-time NPC positions.
+- Integrate the visualizer into `SimulationServer.java` so that starting the server opens a live visual monitor of the simulation.
+
+### B. Why It Is Changing
+- Having a native Java GUI allows immediate visual debugging of the simulation engine without needing to launch the WebGL client.
+- Provides a standalone desktop graphics experience for users who prefer running the game purely in Java.
+
+### C. What It Will Do
+- Opens a window (`800x600` or larger) using `java.awt.Graphics2D`.
+- Translates world coordinates (x, z) to screen coordinates.
+- Draws nodes as small circles, edges as lines, and NPCs as colored dots that move in real-time.
+- Displays the current game time and day on the screen.

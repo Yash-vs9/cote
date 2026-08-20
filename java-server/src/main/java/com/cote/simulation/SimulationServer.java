@@ -17,8 +17,14 @@ public class SimulationServer {
     private final SimulationEngine engine;
     private final HttpServer server;
 
-    public SimulationServer(int port) throws IOException {
+    public SimulationServer(int port, boolean headless) throws IOException {
         this.engine = new SimulationEngine();
+        
+        if (!headless) {
+            // Start the visualizer
+            new SimulationVisualizer(this.engine);
+        }
+
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         this.server.setExecutor(Executors.newCachedThreadPool());
 
@@ -46,6 +52,8 @@ public class SimulationServer {
     }
 
     private void setupRoutes() {
+        server.createContext("/", new StaticFileHandler(".."));
+
         server.createContext("/api/health", new HttpHandler() {
             @Override
             public void handle(HttpExchange exchange) throws IOException {
@@ -165,10 +173,16 @@ public class SimulationServer {
     public static void main(String[] args) {
         try {
             int port = DEFAULT_PORT;
-            if (args.length > 0) {
-                try { port = Integer.parseInt(args[0]); } catch (Exception ignored) {}
+            boolean headless = false;
+            
+            for (String arg : args) {
+                if (arg.equals("--headless")) headless = true;
+                else {
+                    try { port = Integer.parseInt(arg); } catch (Exception ignored) {}
+                }
             }
-            SimulationServer server = new SimulationServer(port);
+            
+            SimulationServer server = new SimulationServer(port, headless);
             server.start();
         } catch (Exception e) {
             e.printStackTrace();

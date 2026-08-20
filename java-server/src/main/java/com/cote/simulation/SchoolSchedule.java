@@ -37,11 +37,12 @@ public class SchoolSchedule {
     public ScheduleEvent getCurrentEvent(int minuteOfDay) {
         int m = minuteOfDay % (24 * 60);
         for (ScheduleEvent e : events) {
-            if (e.getStartMin() <= e.getEndMin()) {
-                if (m >= e.getStartMin() && m < e.getEndMin()) return e;
+            int end = e.getEndMin() % (24 * 60);
+            if (e.getStartMin() <= end) {
+                if (m >= e.getStartMin() && m < end) return e;
             } else {
                 // Crosses midnight
-                if (m >= e.getStartMin() || m < (e.getEndMin() % (24 * 60))) return e;
+                if (m >= e.getStartMin() || m < end) return e;
             }
         }
         return events.get(0);
