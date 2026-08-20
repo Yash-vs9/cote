@@ -38,6 +38,9 @@ public class CampusBuilder {
     public void buildAll() {
         buildAcademicBuilding();
         buildResidentialSector();
+        buildSchoolCafeteria();
+        buildGymnasium();
+        buildMainEntrance();
     }
     
     private Geometry makeBox(float w, float h, float d, ColorRGBA color, float x, float y, float z, Node parent, boolean cast, boolean recv, boolean collide) {
@@ -212,5 +215,68 @@ public class CampusBuilder {
         addCollider(-34, 58 + 14, 28, 1);
         addCollider(-34 - 10, 58 - 14, 8, 1);
         addCollider(-34 + 10, 58 - 14, 8, 1);
+    }
+
+    private void buildSchoolCafeteria() {
+        Node g = new Node("SchoolCafeteria");
+        rootNode.attachChild(g);
+        float cX = 62, cZ = -20;
+
+        ColorRGBA matFloor = new ColorRGBA(0.9f, 0.83f, 0.7f, 1.0f);
+        ColorRGBA matWall = new ColorRGBA(0.95f, 0.94f, 0.91f, 1.0f);
+
+        makeBox(24, 0.05f, 24, matFloor, cX, 0.02f, cZ, g);
+        makeBox(24, 5.0f, 0.3f, matWall, cX, 2.5f, cZ - 12.0f, g);
+        makeBox(24, 5.0f, 0.3f, matWall, cX, 2.5f, cZ + 12.0f, g);
+        makeBox(0.3f, 5.0f, 24, matWall, cX + 12.0f, 2.5f, cZ, g);
+        
+        makeBox(0.3f, 5.0f, 10.0f, matWall, cX - 12.0f, 2.5f, cZ - 7.0f, g);
+        makeBox(0.3f, 5.0f, 10.0f, matWall, cX - 12.0f, 2.5f, cZ + 7.0f, g);
+        makeBox(0.3f, 1.5f, 4.0f, matWall, cX - 12.0f, 4.25f, cZ, g);
+        
+        addCollider(cX, cZ - 12.0f, 24, 0.3f);
+        addCollider(cX, cZ + 12.0f, 24, 0.3f);
+        addCollider(cX + 12.0f, cZ, 0.3f, 24);
+        addCollider(cX - 12.0f, cZ - 7.0f, 0.3f, 10.0f);
+        addCollider(cX - 12.0f, cZ + 7.0f, 0.3f, 10.0f);
+    }
+
+    private void buildGymnasium() {
+        Node g = new Node("Gymnasium");
+        rootNode.attachChild(g);
+        float cX = 62, cZ = 22;
+
+        ColorRGBA matCourt = new ColorRGBA(0.89f, 0.75f, 0.55f, 1.0f);
+        ColorRGBA matConcrete = new ColorRGBA(0.6f, 0.61f, 0.63f, 1.0f);
+
+        makeBox(24, 0.05f, 28, matCourt, cX, 0.02f, cZ, g);
+        makeBox(24, 6.0f, 0.4f, matConcrete, cX, 3.0f, cZ - 14.0f, g);
+        makeBox(24, 6.0f, 0.4f, matConcrete, cX, 3.0f, cZ + 14.0f, g);
+        makeBox(0.4f, 6.0f, 28, matConcrete, cX + 12.0f, 3.0f, cZ, g);
+        
+        makeBox(0.4f, 6.0f, 12.0f, matConcrete, cX - 12.0f, 3.0f, cZ - 8.0f, g);
+        makeBox(0.4f, 6.0f, 12.0f, matConcrete, cX - 12.0f, 3.0f, cZ + 8.0f, g);
+        makeBox(0.4f, 2.0f, 4.0f, matConcrete, cX - 12.0f, 5.0f, cZ, g);
+
+        addCollider(cX, cZ - 14.0f, 24, 0.4f);
+        addCollider(cX, cZ + 14.0f, 24, 0.4f);
+        addCollider(cX + 12.0f, cZ, 0.4f, 28);
+        addCollider(cX - 12.0f, cZ - 8.0f, 0.4f, 12.0f);
+        addCollider(cX - 12.0f, cZ + 8.0f, 0.4f, 12.0f);
+    }
+
+    private void buildMainEntrance() {
+        Node g = new Node("MainEntrance");
+        rootNode.attachChild(g);
+        float cZ = 95;
+
+        ColorRGBA matStone = new ColorRGBA(0.58f, 0.64f, 0.72f, 1.0f);
+
+        makeBox(2.0f, 6.0f, 2.0f, matStone, -14, 3.0f, cZ, g);
+        makeBox(2.0f, 6.0f, 2.0f, matStone, 14, 3.0f, cZ, g);
+        makeBox(30, 1.0f, 1.0f, matStone, 0, 6.2f, cZ, g);
+        
+        addCollider(-14, cZ, 2.2f, 2.2f);
+        addCollider(14, cZ, 2.2f, 2.2f);
     }
 }
