@@ -236,8 +236,9 @@
   <div class="keys">
     <span class="key">WASD Move</span>
     <span class="key">Shift Sprint</span>
-    <span class="key">Mouse Look</span>
-    <span class="key">E Talk</span>
+    <span class="key">Mouse Look / Scroll Zoom</span>
+    <span class="key">F5 Camera (FPS/TPS)</span>
+    <span class="key">E Talk / Sit / Rest</span>
     <span class="key">V Weather</span>
     <span class="key">M Voices</span>
     <span class="key">F3 Schedule</span>
@@ -246,6 +247,9 @@
     <button class="btn ghost sm" id="reset-btn" onclick="window.resetGameData?.()">Reset All Data</button>
   </div>
 </div>
+
+<!-- Cinematic Sleep / Time-Skip Overlay -->
+<div id="sleep-overlay" style="position:fixed;inset:0;background:#000;opacity:0;pointer-events:none;z-index:99;transition:opacity 1.2s ease-in-out;"></div>
 
 <!-- Bottom conversation panel -->
 <div id="dialogue">

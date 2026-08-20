@@ -240,6 +240,29 @@ Formerly `WEB GL/`. Contains 15 standalone Three.js HTML files designed as inter
   - `SimulationServer.java`: Embedded JDK HTTP server on port `8080` with REST API and CORS support.
 - `JavaSimulationBridge`: Integrated a live bridge in `game3d-campus.html` that automatically detects when `SimulationServer` is running on port 8080 and synchronizes simulation state seamlessly with fallback to in-browser JS.
 
+### 11. Third-Person Spring-Arm Camera & Player Locomotion (Phase 3)
+- **Dynamic Perspective Toggle (`F5`)**: Seamlessly switch between First-Person (`FPS`) and Third-Person Over-The-Shoulder (`TPS`). Mouse wheel dynamically zooms distance between $0.8\text{m}$ and $5.5\text{m}$.
+- **Spring-Arm Raycast Wall Collision**: Raycasts from player head level $(p_x, 1.8\text{m}, p_z)$ against all building AABBs. If a wall or doorframe intersects closer than the target camera distance, distance clamps smoothly to eliminate wall-clipping.
+- **Player Avatar Locomotion Rigging**: Ayanokouji's 3D rig is fully visible in TPS mode. Interpolates avatar yaw towards movement direction vector with natural stride, pelvic bounce, arm pendulum, and clean stationary idle poses.
+
+### 12. Interactive World Stations & Java Time Synchronization (Phase 3)
+- **`WORLD_STATIONS` Registry**: Implemented interactive furniture and facility stations across the campus:
+  - **Seat 14 (Ayanokouji Desk)**: Sit down, lock camera to homeroom lecture view, and activate desk writing animation.
+  - **Dormitory Bed (Room 401)**: Rest in bed with a 1.5s cinematic fade-to-black transition, invoking `GET/POST /api/time?hour=7.5` on the Java Simulation Server, advancing the day counter, and waking up at $07:30\text{ AM}$ with morning chime SFX.
+  - **Memorial Library Study Carrel**: Study academic literature, awards $+3$ Wisdom stat.
+  - **Palette Café Patio**: Sit and enjoy refreshment, awards $+2$ Trust stat.
+  - **Cafeteria Vending Machine**: Purchase cold green tea, awards $+2$ Courage stat.
+  - **Central Park Sakura Bench**: Relax by the multi-tier fountain.
+- **Context-Sensitive HUD Prompts**: `updateProximity()` dynamically surfaces station prompts (`Press E to Sit at Seat 14`, `Press E to Rest in Bed`, etc.).
+
+### 13. Procedural 3D Activity Hand Props (Phase 3)
+- **Dynamic Prop Meshes**:
+  - 📖 **Hardcover Book**: Dual angled covers with paper pages for library study.
+  - 🍱 **Bento Lunch Tray**: Segmented dining tray with rice bowl, dish, and chopsticks for cafeteria dining.
+  - 🏀 **Basketball**: Bouncing orange sphere with animated sine wave oscillation ($y(t) = |\sin(8t)| \times 0.45\text{m}$) for gymnasium drills.
+  - ☕ **Ceramic Mug**: Low-poly coffee mug for Palette Café and lounge socializing.
+- **Automatic Lifecycle Management**: Automatically equips matching props when NPCs and player enter station/activity states, and detaches props during navigation locomotion.
+
 ---
 
 ## 5. How to Play & Test
@@ -247,5 +270,6 @@ Formerly `WEB GL/`. Contains 15 standalone Three.js HTML files designed as inter
 * **Local Web Server**: Open [http://localhost:3000/index.html](http://localhost:3000/index.html) (or [http://localhost:3000/game3d-campus.html](http://localhost:3000/game3d-campus.html)) in your browser.
 * **Direct File**: Double-click `game3d-campus.html` or `index.html` in File Explorer.
 * **Run Java Backend Server**: Inside `java-server/`, execute `compile_and_run.bat` (or `compile_and_run.sh`).
+* **Camera Perspective**: Press **`F5`** (or scroll mouse wheel) to toggle between First-Person and Third-Person Over-The-Shoulder view.
+* **World Stations**: Walk up to Seat 14 in Class 1-D, Dorm Bed in Room 401, or Library Carrels and press **`E`** to sit, rest, or study.
 * **Schedule Diagnostics**: Press **`F3`** in the 3D game to view engine status (`🟢 Java Server` vs `⚪ Local JS Engine`), toggle 3D path lines, and use the 8 time-skip buttons to test routines.
-* **Automated Navigation Tests**: Call `testCampusNavigation()` in the browser console (F12) to inspect route candidates and multi-path test results.

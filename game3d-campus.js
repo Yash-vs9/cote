@@ -2929,6 +2929,110 @@ function makeRig(cfg) {
   return { root, body, hips, torso, head, face, ...arms, ...legs, height: 1.74 * scale };
 }
 
+// ---------- Procedural 3D Activity Hand Props ----------
+function createBookProp() {
+  const group = new THREE.Group(); group.name = 'prop_book';
+  const coverMat = charMat(0x1e3a8a);
+  const pageMat = charMat(0xfaf8f5);
+  // Open book angled covers
+  const coverL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.008, 0.18), coverMat);
+  coverL.position.set(-0.07, 0, 0); coverL.rotation.z = -0.15; coverL.castShadow = true;
+  const coverR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.008, 0.18), coverMat);
+  coverR.position.set(0.07, 0, 0); coverR.rotation.z = 0.15; coverR.castShadow = true;
+  // Pages
+  const pageL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.016, 0.16), pageMat);
+  pageL.position.set(-0.06, 0.009, 0); pageL.rotation.z = -0.15;
+  const pageR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.016, 0.16), pageMat);
+  pageR.position.set(0.06, 0.009, 0); pageR.rotation.z = 0.15;
+  group.add(coverL, coverR, pageL, pageR);
+  group.scale.setScalar(1.0);
+  return group;
+}
+
+function createLunchTrayProp() {
+  const group = new THREE.Group(); group.name = 'prop_tray';
+  const trayMat = charMat(0x7c2d12);
+  const foodMat = charMat(0xd97706);
+  const riceMat = charMat(0xf8fafc);
+  const stickMat = charMat(0xd4a373);
+  const tray = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.015, 0.20), trayMat);
+  tray.castShadow = true;
+  const bowl = new THREE.Mesh(geoCyl(0.045, 0.035, 0.04), riceMat);
+  bowl.position.set(-0.07, 0.025, -0.04); bowl.castShadow = true;
+  const dish = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.02, 0.07), foodMat);
+  dish.position.set(0.05, 0.015, -0.03); dish.castShadow = true;
+  const sticks = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.005, 0.008), stickMat);
+  sticks.position.set(0, 0.015, 0.06);
+  group.add(tray, bowl, dish, sticks);
+  return group;
+}
+
+function createBasketballProp() {
+  const group = new THREE.Group(); group.name = 'prop_ball';
+  const ball = new THREE.Mesh(geoSph(0.12), charMat(0xea580c));
+  ball.castShadow = true;
+  group.add(ball);
+  return group;
+}
+
+function createCoffeeCupProp() {
+  const group = new THREE.Group(); group.name = 'prop_coffee';
+  const cup = new THREE.Mesh(geoCyl(0.035, 0.025, 0.08), charMat(0xf1f5f9));
+  cup.castShadow = true;
+  const coffee = new THREE.Mesh(geoCyl(0.032, 0.032, 0.005), charMat(0x3e2723));
+  coffee.position.y = 0.038;
+  group.add(cup, coffee);
+  return group;
+}
+
+function attachProp(rig, propType) {
+  if (!rig) return;
+  if (rig.activePropType === propType) return;
+  detachProps(rig);
+
+  let propObj = null;
+  if (propType === 'book') propObj = createBookProp();
+  else if (propType === 'tray') propObj = createLunchTrayProp();
+  else if (propType === 'ball' || propType === 'basketball') propObj = createBasketballProp();
+  else if (propType === 'coffee' || propType === 'mug') propObj = createCoffeeCupProp();
+
+  if (!propObj) return;
+
+  if (propType === 'book') {
+    propObj.position.set(0, -0.15, 0.18);
+    propObj.rotation.set(-0.3, 0, 0);
+    rig.torso.add(propObj);
+  } else if (propType === 'tray') {
+    propObj.position.set(0, -0.12, 0.22);
+    rig.torso.add(propObj);
+  } else if (propType === 'ball' || propType === 'basketball') {
+    propObj.position.set(0.18, -0.65, 0.22);
+    rig.body.add(propObj);
+  } else if (propType === 'coffee' || propType === 'mug') {
+    propObj.position.set(0.12, -0.25, 0.16);
+    rig.torso.add(propObj);
+  }
+  rig.activePropType = propType;
+  rig.activePropMesh = propObj;
+}
+
+function detachProps(rig) {
+  if (!rig) return;
+  if (rig.activePropMesh && rig.activePropMesh.parent) {
+    rig.activePropMesh.parent.remove(rig.activePropMesh);
+  }
+  const cleanup = parent => {
+    if (!parent) return;
+    for (let i = parent.children.length - 1; i >= 0; i--) {
+      const ch = parent.children[i];
+      if (ch.name && ch.name.startsWith('prop_')) parent.remove(ch);
+    }
+  };
+  cleanup(rig.torso); cleanup(rig.body); cleanup(rig.elbowR); cleanup(rig.elbowL);
+  rig.activePropType = null;
+  rig.activePropMesh = null;
+}
+
 // Procedural Activity & Realistic Biomechanical Locomotion Engine
 function animateRig(rig, a, dt) {
   a.blinkT = (a.blinkT ?? 2) - dt;
@@ -3080,6 +3184,14 @@ function animateRig(rig, a, dt) {
     const wantX = a.lookPitch ?? (Math.sin(a.idleT * 0.3) * 0.05);
     rig.head.rotation.y += (Math.max(-1.1, Math.min(1.1, wantY)) - rig.head.rotation.y) * Math.min(1, dt * 5.5);
     rig.head.rotation.x += (Math.max(-0.5, Math.min(0.5, wantX)) - rig.head.rotation.x) * Math.min(1, dt * 5.5);
+  }
+
+  // Dynamic prop animation (e.g. basketball bounce sync with dribble)
+  if (rig.activePropType === 'ball' || rig.activePropType === 'basketball') {
+    if (rig.activePropMesh) {
+      const bounce = Math.abs(Math.sin((a.idleT ?? 0) * 8.0));
+      rig.activePropMesh.position.y = -0.78 + bounce * 0.45;
+    }
   }
 }
 
@@ -3320,7 +3432,8 @@ COHORT.forEach(c => {
 
 const playerAvatar = makeRig({ hair: 0xa89478, hairStyle: 'medium', gender: 'm', skin: 0xf0c9a0, blazer: 0xb23440, tie: 0xf3f1ea });
 playerAvatar.root.visible = false; scene.add(playerAvatar.root);
-const playerAnim = { moving: false, phase: 0, talk: false, idleT: 0, mode: 'idle' };
+const playerPos = new THREE.Vector3(0, 0, 40);
+const playerAnim = { moving: false, phase: 0, talk: false, idleT: 0, mode: 'idle', run: false };
 
 // =========================================================================
 // NPC PURPOSE DECISION & STATE MACHINE ENGINE
@@ -3742,7 +3855,8 @@ function updateNPCBehavior(npc, dt, elapsed) {
     const dx = camera.position.x - p.x, dz = camera.position.z - p.z;
     npc.facing = Math.atan2(dx, dz);
   } else if (npc.path && npc.path.length > 0 && npc.pathI < npc.path.length) {
-    // Traveling to Destination Waypoints
+    // Traveling to Destination Waypoints — detach hand props while walking
+    detachProps(npc.rig);
     const isLast = npc.pathI === npc.path.length - 1;
     const wp = npc.path[npc.pathI];
     npc.anim.mode = 'idle';
@@ -3791,25 +3905,30 @@ function updateNPCBehavior(npc, dt, elapsed) {
         npc.currentSpot = npc._destLoc || npc.currentSpot;
         if (wp.facing !== undefined) npc.facing = wp.facing;
 
-        // Transition to arrived activity state
+        // Transition to arrived activity state & attach matching props
         if (npc._destLoc === 'class1d') {
           npc.state = npc.role === 'teacher' ? 'TEACHING_CLASS' : 'IN_CLASS';
           npc.anim.mode = npc.role === 'teacher' ? 'teach_lecture' : 'sit_desk';
         } else if (npc._destLoc === 'cafeteria') {
           npc.state = 'EATING';
           npc.anim.mode = 'sit_eat';
+          attachProp(npc.rig, 'tray');
         } else if (npc._destLoc === 'library') {
           npc.state = 'STUDYING';
           npc.anim.mode = 'sit_read';
+          attachProp(npc.rig, 'book');
         } else if (npc._destLoc === 'gym' || npc._destLoc === 'field' || npc._destLoc === 'aquatic') {
           npc.state = 'PLAYING_SPORT';
           npc.anim.mode = 'sport_drill';
-        } else if (npc._destLoc === 'cafe' || npc._destLoc === 'mall' || npc._destLoc === 'courtyard') {
+          attachProp(npc.rig, 'ball');
+        } else if (npc._destLoc === 'cafe') {
           npc.state = 'SOCIALIZING';
           npc.anim.mode = 'idle';
+          attachProp(npc.rig, 'coffee');
         } else {
           npc.state = 'IDLE_AT_DESTINATION';
           npc.anim.mode = 'idle';
+          detachProps(npc.rig);
         }
       }
     }
@@ -3817,12 +3936,25 @@ function updateNPCBehavior(npc, dt, elapsed) {
     // Performing Current Activity
     npc.anim.moving = false;
     npc.curSpeed = 0;
-    if (npc.state === 'IN_CLASS') npc.anim.mode = 'sit_desk';
-    else if (npc.state === 'TEACHING_CLASS') npc.anim.mode = 'teach_lecture';
-    else if (npc.state === 'EATING') npc.anim.mode = 'sit_eat';
-    else if (npc.state === 'STUDYING') npc.anim.mode = 'sit_read';
-    else if (npc.state === 'PLAYING_SPORT') npc.anim.mode = 'sport_drill';
-    else npc.anim.mode = 'idle';
+    if (npc.state === 'IN_CLASS') {
+      npc.anim.mode = 'sit_desk';
+    } else if (npc.state === 'TEACHING_CLASS') {
+      npc.anim.mode = 'teach_lecture';
+    } else if (npc.state === 'EATING') {
+      npc.anim.mode = 'sit_eat';
+      attachProp(npc.rig, 'tray');
+    } else if (npc.state === 'STUDYING') {
+      npc.anim.mode = 'sit_read';
+      attachProp(npc.rig, 'book');
+    } else if (npc.state === 'PLAYING_SPORT') {
+      npc.anim.mode = 'sport_drill';
+      attachProp(npc.rig, 'ball');
+    } else if (npc._destLoc === 'cafe') {
+      npc.anim.mode = 'idle';
+      attachProp(npc.rig, 'coffee');
+    } else {
+      npc.anim.mode = 'idle';
+    }
 
     if (npc.targetSpot && npc.targetSpot.facing !== undefined) {
       npc.facing = npc.targetSpot.facing;
@@ -4086,6 +4218,331 @@ function updateWeather(dt, elapsed) {
   }
 }
 
+// ---------- Interactive World Stations Registry ----------
+export const WORLD_STATIONS = [
+  {
+    id: 'AYANOKOUJI_DESK',
+    name: 'Seat 14 (Ayanokouji)',
+    loc: 'class1d',
+    x: -61.0, y: 0, z: -19.55,
+    facing: Math.PI,
+    radius: 3.0,
+    prompt: 'Sit at Seat 14',
+    animMode: 'sit_desk',
+    type: 'seat',
+    note: 'Class 1-D Homeroom Desk · Ayanokouji Kiyotaka'
+  },
+  {
+    id: 'DORM_BED_401',
+    name: 'Room 401 Dormitory Bed',
+    loc: 'dorm',
+    x: -48.2, y: 0, z: 56.5,
+    facing: 0,
+    radius: 3.5,
+    prompt: 'Rest in Bed (Sleep until 07:30)',
+    animMode: 'sit_desk',
+    type: 'bed',
+    note: 'Residential Dormitory · Room 401'
+  },
+  {
+    id: 'LIBRARY_STUDY_DESK_1',
+    name: 'Memorial Library Reading Desk (East)',
+    loc: 'library',
+    x: -58.0, y: 0, z: 24.8,
+    facing: 0,
+    radius: 3.8,
+    prompt: 'Study Academic Materials (+3 Wisdom)',
+    animMode: 'sit_read',
+    prop: 'book',
+    type: 'study',
+    note: 'Memorial Library · 2nd Floor Reading Section'
+  },
+  {
+    id: 'LIBRARY_STUDY_DESK_2',
+    name: 'Memorial Library Reading Desk (South)',
+    loc: 'library',
+    x: -58.0, y: 0, z: 19.2,
+    facing: Math.PI,
+    radius: 3.8,
+    prompt: 'Study Academic Materials (+3 Wisdom)',
+    animMode: 'sit_read',
+    prop: 'book',
+    type: 'study',
+    note: 'Memorial Library · 2nd Floor Reading Section'
+  },
+  {
+    id: 'LIBRARY_STUDY_DESK_3',
+    name: 'Memorial Library Reading Desk (West)',
+    loc: 'library',
+    x: -66.0, y: 0, z: 24.8,
+    facing: 0,
+    radius: 3.8,
+    prompt: 'Study Academic Materials (+3 Wisdom)',
+    animMode: 'sit_read',
+    prop: 'book',
+    type: 'study',
+    note: 'Memorial Library · 2nd Floor Reading Section'
+  },
+  {
+    id: 'PALETTE_CAFE_TABLE_1',
+    name: 'Palette Café Table (West)',
+    loc: 'cafe',
+    x: 50.9, y: 0, z: 53.0,
+    facing: Math.PI / 2,
+    radius: 3.8,
+    prompt: 'Relax with Café Refreshment (+2 Trust)',
+    animMode: 'sit_eat',
+    prop: 'coffee',
+    type: 'cafe',
+    note: 'Palette Café · Indoor Dining'
+  },
+  {
+    id: 'PALETTE_CAFE_TABLE_2',
+    name: 'Palette Café Table (East)',
+    loc: 'cafe',
+    x: 55.7, y: 0, z: 53.0,
+    facing: Math.PI / 2,
+    radius: 3.8,
+    prompt: 'Relax with Café Refreshment (+2 Trust)',
+    animMode: 'sit_eat',
+    prop: 'coffee',
+    type: 'cafe',
+    note: 'Palette Café · Indoor Dining'
+  },
+  {
+    id: 'PALETTE_CAFE_TERRACE',
+    name: 'Palette Café Terrace Patio',
+    loc: 'cafe',
+    x: 54.0, y: 0, z: 49.0,
+    facing: -Math.PI / 2,
+    radius: 3.8,
+    prompt: 'Enjoy Café Terrace (+2 Trust)',
+    animMode: 'sit_eat',
+    prop: 'coffee',
+    type: 'cafe',
+    note: 'Palette Café · Terrace Seating'
+  },
+  {
+    id: 'CAFETERIA_VENDING',
+    name: 'Cafeteria Vending Machine',
+    loc: 'cafeteria',
+    x: 50.0, y: 0, z: -28.0,
+    facing: Math.PI,
+    radius: 3.0,
+    prompt: 'Purchase Cold Beverage (+2 Courage)',
+    type: 'vending',
+    note: 'Cafeteria Refreshment Station'
+  },
+  {
+    id: 'CENTRAL_PARK_BENCH',
+    name: 'Central Fountain Bench',
+    loc: 'courtyard',
+    x: 0.0, y: 0, z: 8.0,
+    facing: 0,
+    radius: 3.2,
+    prompt: 'Sit by Central Fountain',
+    animMode: 'sit_desk',
+    type: 'bench',
+    note: 'Central Park · Sakura Plaza'
+  }
+];
+
+let activeStation = null;
+let nearStation = null;
+
+function getClosestStation(maxDist = 3.8) {
+  let closest = null, bestDist = 999;
+  const px = playerPos.x, pz = playerPos.z;
+  for (const st of WORLD_STATIONS) {
+    const d = planar(px, pz, st.x, st.z);
+    const r = st.radius || maxDist;
+    if (d < r && d < bestDist) {
+      bestDist = d;
+      closest = st;
+    }
+  }
+  return closest;
+}
+
+function useStation(st) {
+  if (!st) return;
+  if (st.type === 'bed') {
+    performSleepRest(st);
+    return;
+  }
+  if (st.type === 'vending') {
+    performVendingPurchase(st);
+    return;
+  }
+
+  activeStation = st;
+  playerPos.set(st.x, 0, st.z);
+  playerAvatar.root.position.set(st.x, 0, st.z);
+  playerAvatar.root.rotation.y = st.facing || 0;
+  playerAvatar.root.visible = true;
+  playerAnim.mode = st.animMode || 'sit_desk';
+  playerAnim.moving = false;
+  if (st.prop) attachProp(playerAvatar, st.prop);
+
+  if (st.type === 'study' || st.id.startsWith('LIBRARY')) {
+    applyStats({ wisdom: 3 });
+    CampusAudioEngine.playObjectiveJingle();
+    showToast('📖 Studied academic materials (+3 Wisdom). Press WASD or E to stand.', 4000);
+  } else if (st.type === 'cafe' || st.id.startsWith('PALETTE')) {
+    applyStats({ trust: 2 });
+    CampusAudioEngine.playObjectiveJingle();
+    showToast('☕ Enjoyed café refreshment (+2 Trust). Press WASD or E to stand.', 4000);
+  } else if (st.id === 'AYANOKOUJI_DESK' || st.type === 'seat') {
+    showToast('🏫 Seated at Class 1-D Seat 14. Press WASD or E to stand.', 4000);
+  } else if (st.id === 'CENTRAL_PARK_BENCH' || st.type === 'bench') {
+    showToast('🌸 Relaxing by the sakura fountain. Press WASD or E to stand.', 4000);
+  }
+}
+
+function leaveStation() {
+  if (!activeStation) return;
+  detachProps(playerAvatar);
+  playerAnim.mode = 'idle';
+  playerAnim.moving = false;
+  activeStation = null;
+  if (camPerspective === 'fps' && camMode === 'free') {
+    playerAvatar.root.visible = false;
+  }
+}
+
+function performSleepRest(st) {
+  const overlay = document.getElementById('sleep-overlay');
+  if (overlay) overlay.style.opacity = '1';
+  showToast('🌙 Falling asleep...', 1500);
+
+  setTimeout(() => {
+    gameDay++;
+    save('cote3dDay', gameDay);
+    clockMin = 450; // 07:30 AM
+    updateSchoolScheduleSystem();
+    updateDiurnalLighting(0.1, 0);
+
+    // Call Java Backend Server if running
+    fetch('http://localhost:8080/api/time?hour=7.5').catch(() => {});
+
+    // Audio cue
+    CampusAudioEngine.playWestminsterChime();
+
+    if (overlay) overlay.style.opacity = '0';
+    showToast(`🌅 Day ${gameDay} — 07:30 AM. Well rested!`, 4500);
+  }, 1200);
+}
+
+function performVendingPurchase(st) {
+  applyStats({ courage: 2 });
+  showToast('🥤 Purchased cold iced green tea from vending machine (+2 Courage)!', 3500);
+}
+
+// ---------- Camera Perspective & Spring-Arm System ----------
+let camPerspective = 'fps'; // 'fps' or 'tps'
+let tpsDistance = 3.2;
+let currentTpsDist = 3.2;
+const TPS_HEIGHT = 1.8;
+const TPS_SHOULDER_OFFSET = 0.55;
+
+export function toggleCameraPerspective() {
+  camPerspective = (camPerspective === 'fps') ? 'tps' : 'fps';
+  if (camPerspective === 'tps') {
+    playerAvatar.root.visible = true;
+    showToast('🎥 Perspective: Third-Person Over-The-Shoulder (F5)', 2500);
+  } else {
+    if (camMode === 'free' && !activeStation) playerAvatar.root.visible = false;
+    showToast('🎥 Perspective: First-Person View (F5)', 2500);
+  }
+  refreshCamChip();
+}
+window.toggleCameraPerspective = toggleCameraPerspective;
+
+const camChip = document.createElement('div');
+camChip.style.cssText = 'background:rgba(13,16,24,.88);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:13px;backdrop-filter:blur(10px);pointer-events:auto;cursor:pointer;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.5);';
+camChip.title = 'Click to toggle camera perspective (F5: First-Person / Third-Person) · Scroll to zoom';
+camChip.onclick = toggleCameraPerspective;
+function refreshCamChip() {
+  camChip.textContent = (camPerspective === 'fps') ? '🎥 FPS (F5)' : '🎥 TPS (F5)';
+}
+refreshCamChip();
+$('topright').appendChild(camChip);
+
+// Ray-AABB intersection for Spring-Arm wall collision
+function rayAABBIntersect(ox, oy, oz, dx, dy, dz, minX, maxX, minY, maxY, minZ, maxZ, maxDist) {
+  let tmin = 0.0;
+  let tmax = maxDist;
+
+  if (Math.abs(dx) < 1e-7) {
+    if (ox < minX || ox > maxX) return -1;
+  } else {
+    const invD = 1.0 / dx;
+    let t1 = (minX - ox) * invD, t2 = (maxX - ox) * invD;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return -1;
+  }
+
+  if (Math.abs(dy) < 1e-7) {
+    if (oy < minY || oy > maxY) return -1;
+  } else {
+    const invD = 1.0 / dy;
+    let t1 = (minY - oy) * invD, t2 = (maxY - oy) * invD;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return -1;
+  }
+
+  if (Math.abs(dz) < 1e-7) {
+    if (oz < minZ || oz > maxZ) return -1;
+  } else {
+    const invD = 1.0 / dz;
+    let t1 = (minZ - oz) * invD, t2 = (maxZ - oz) * invD;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return -1;
+  }
+
+  return tmin >= 0 ? tmin : -1;
+}
+
+function resolveSpringArmDistance(ox, oy, oz, dx, dy, dz, maxDistance) {
+  let minHit = maxDistance;
+  for (const c of colliders) {
+    const t = rayAABBIntersect(ox, oy, oz, dx, dy, dz, c.minX, c.maxX, 0, 3.8, c.minZ, c.maxZ, minHit);
+    if (t > 0.05 && t < minHit) {
+      minHit = t;
+    }
+  }
+  return minHit;
+}
+
+// Mouse wheel zoom support
+addEventListener('wheel', e => {
+  if (dialogue.style.display === 'flex' || storyEl.style.display === 'flex') return;
+  if (e.deltaY > 0) {
+    if (camPerspective === 'fps') {
+      camPerspective = 'tps';
+      tpsDistance = 1.8;
+      refreshCamChip();
+    } else {
+      tpsDistance = Math.min(5.5, tpsDistance + 0.35);
+    }
+  } else if (e.deltaY < 0) {
+    if (camPerspective === 'tps') {
+      tpsDistance = Math.max(0.8, tpsDistance - 0.35);
+      if (tpsDistance <= 0.9) {
+        camPerspective = 'fps';
+        tpsDistance = 3.2;
+        refreshCamChip();
+      }
+    }
+  }
+}, { passive: true });
+
 // ---------- Controls & Input ----------
 const keys = {};
 let yaw = 0, pitch = -0.05, locked = false, dragging = false;
@@ -4094,12 +4551,13 @@ const LOOK = 0.0025;
 function getClosestNPC(maxDist = 4.2) {
   let closest = null, bestScore = maxDist;
   const camDir = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const px = playerPos.x, pz = playerPos.z;
   for (const n of npcs) {
     if (!n.rig || !n.rig.root) continue;
     const p = n.rig.root.position;
-    const d = planar(camera.position.x, camera.position.z, p.x, p.z);
+    const d = planar(px, pz, p.x, p.z);
     if (d < maxDist) {
-      const toNPC = new THREE.Vector3(p.x - camera.position.x, 0, p.z - camera.position.z).normalize();
+      const toNPC = new THREE.Vector3(p.x - px, 0, p.z - pz).normalize();
       const dot = camDir.dot(toNPC);
       const score = d - (dot > 0 ? dot * 0.75 : 0);
       if (score < bestScore) {
@@ -4114,12 +4572,30 @@ function getClosestNPC(maxDist = 4.2) {
 addEventListener('keydown', e => {
   keys[e.code] = true;
   CampusAudioEngine.resumeOnGesture();
+  if (e.code === 'F5' || e.key === 'F5') {
+    toggleCameraPerspective();
+    e.preventDefault();
+  }
+  if (e.code === 'Escape') {
+    if (activeStation) {
+      leaveStation();
+      e.preventDefault();
+    }
+  }
   if ((e.code === 'KeyE' || e.key === 'e' || e.key === 'E') && document.activeElement !== dlgInput) {
     if (dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') {
-      const target = nearNPC || getClosestNPC(4.2);
-      if (target) {
-        openDialogue(target);
+      if (activeStation) {
+        leaveStation();
         e.preventDefault();
+      } else if (nearStation && (!nearNPC || planar(playerPos.x, playerPos.z, nearStation.x, nearStation.z) < planar(playerPos.x, playerPos.z, nearNPC.rig.root.position.x, nearNPC.rig.root.position.z))) {
+        useStation(nearStation);
+        e.preventDefault();
+      } else {
+        const target = nearNPC || getClosestNPC(4.2);
+        if (target) {
+          openDialogue(target);
+          e.preventDefault();
+        }
       }
     }
   }
@@ -4166,7 +4642,7 @@ cv.addEventListener('click', e => {
       while (obj) {
         if (obj.userData?.npc) {
           const target = obj.userData.npc;
-          const dist = planar(camera.position.x, camera.position.z, target.rig.root.position.x, target.rig.root.position.z);
+          const dist = planar(playerPos.x, playerPos.z, target.rig.root.position.x, target.rig.root.position.z);
           if (dist <= 4.5 && dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') {
             openDialogue(target);
             return;
@@ -4186,8 +4662,8 @@ function playerBlocked(x, z) {
   return false;
 }
 function tryMove(nx, nz) {
-  if (!playerBlocked(nx, camera.position.z)) camera.position.x = nx;
-  if (!playerBlocked(camera.position.x, nz)) camera.position.z = nz;
+  if (!playerBlocked(nx, playerPos.z)) playerPos.x = nx;
+  if (!playerBlocked(playerPos.x, nz)) playerPos.z = nz;
 }
 
 // ---------- Camera & Dialogue Framing ----------
@@ -4199,9 +4675,9 @@ const savedPos = new THREE.Vector3();
 
 function beginTalkCam(npc) {
   savedYaw = yaw; savedPitch = pitch; savedPos.copy(camera.position);
-  playerAvatar.root.position.set(camera.position.x, 0, camera.position.z);
+  playerAvatar.root.position.set(playerPos.x, 0, playerPos.z);
   const np = npc.rig.root.position;
-  playerAvatar.root.rotation.y = Math.atan2(np.x - camera.position.x, np.z - camera.position.z);
+  playerAvatar.root.rotation.y = Math.atan2(np.x - playerPos.x, np.z - playerPos.z);
   playerAvatar.root.visible = true;
   camMode = 'talk';
   crosshair.classList.add('hide');
@@ -4223,6 +4699,14 @@ function endTalkCam() { camMode = 'return'; }
 let nearNPC = null;
 if (promptEl) {
   promptEl.onclick = () => {
+    if (activeStation) {
+      leaveStation();
+      return;
+    }
+    if (nearStation && (!nearNPC || planar(playerPos.x, playerPos.z, nearStation.x, nearStation.z) < planar(playerPos.x, playerPos.z, nearNPC.rig.root.position.x, nearNPC.rig.root.position.z))) {
+      useStation(nearStation);
+      return;
+    }
     const target = nearNPC || getClosestNPC(4.5);
     if (target && dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') {
       openDialogue(target);
@@ -4232,8 +4716,21 @@ if (promptEl) {
 
 function updateProximity() {
   nearNPC = getClosestNPC(4.0);
+  nearStation = getClosestStation(3.8);
   const busy = dialogue.style.display === 'flex' || storyEl.style.display === 'flex' || camMode !== 'free';
-  if (nearNPC && !busy) {
+
+  if (busy) {
+    promptEl.style.display = 'none';
+    return;
+  }
+
+  if (activeStation) {
+    promptEl.style.display = 'block';
+    promptEl.innerHTML = `Press <b>E</b> or <b>WASD</b> to Stand Up (${activeStation.name})`;
+  } else if (nearStation && (!nearNPC || planar(playerPos.x, playerPos.z, nearStation.x, nearStation.z) < planar(playerPos.x, playerPos.z, nearNPC.rig.root.position.x, nearNPC.rig.root.position.z))) {
+    promptEl.style.display = 'block';
+    promptEl.innerHTML = `Press <b>E</b> to ${nearStation.prompt}`;
+  } else if (nearNPC) {
     promptEl.style.display = 'block';
     promptEl.innerHTML = `Press <b>E</b> to talk to <b>${nearNPC.name}</b>`;
   } else {
@@ -4244,7 +4741,7 @@ function updateSceneLabel() {
   let label = 'Campus Grounds', best = 24;
   for (const key of Object.keys(LOC)) {
     const [x, z] = LOC[key].c;
-    const d = planar(camera.position.x, camera.position.z, x, z);
+    const d = planar(playerPos.x, playerPos.z, x, z);
     if (d < best) { best = d; label = LOC[key].label; }
   }
   sceneLabel.textContent = '📍 ' + label;
@@ -4323,11 +4820,67 @@ function animate() {
     if (keys['KeyA'] || keys['ArrowLeft']) { mx -= right.x; mz -= right.z; }
     const len = Math.hypot(mx, mz);
     const isMoving = len > 0;
-    if (isMoving) { mx /= len; mz /= len; tryMove(camera.position.x + mx * speed, camera.position.z + mz * speed); }
-    CampusAudioEngine.stepFootstep(dt, isMoving, isSprint, camera.position.x, camera.position.z, wCur.rain);
-    camera.position.y = EYE;
-    const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
-    camera.lookAt(camera.position.clone().add(dir));
+
+    if (isMoving && activeStation) {
+      leaveStation();
+    }
+
+    if (isMoving && !activeStation) {
+      mx /= len; mz /= len;
+      tryMove(playerPos.x + mx * speed, playerPos.z + mz * speed);
+    }
+
+    CampusAudioEngine.stepFootstep(dt, isMoving, isSprint, playerPos.x, playerPos.z, wCur.rain);
+
+    // Update Player Avatar Position & Kinematics
+    playerAvatar.root.position.set(playerPos.x, 0, playerPos.z);
+
+    if (isMoving) {
+      const moveAngle = Math.atan2(mx, mz);
+      const diff = shortestAngle(playerAvatar.root.rotation.y, moveAngle);
+      playerAvatar.root.rotation.y += diff * Math.min(1, dt * 14.0);
+      playerAnim.moving = true;
+      playerAnim.run = isSprint;
+      playerAnim.phase += dt * (isSprint ? 11.0 : 7.0);
+      playerAnim.mode = 'walk';
+    } else {
+      playerAnim.moving = false;
+      playerAnim.mode = activeStation ? (activeStation.animMode || 'sit_desk') : 'idle';
+      playerAnim.idleT += dt;
+    }
+
+    if (camPerspective === 'fps') {
+      playerAvatar.root.visible = (activeStation !== null);
+      camera.position.set(playerPos.x, EYE, playerPos.z);
+      const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+      camera.lookAt(camera.position.clone().add(dir));
+    } else {
+      // Third-Person Over-The-Shoulder View (TPS)
+      playerAvatar.root.visible = true;
+      const headOrigin = new THREE.Vector3(playerPos.x, TPS_HEIGHT, playerPos.z);
+      const lookDir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)).normalize();
+      const rightDir = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)).normalize();
+
+      const desiredPos = headOrigin.clone()
+        .addScaledVector(lookDir, -tpsDistance)
+        .addScaledVector(rightDir, TPS_SHOULDER_OFFSET * Math.min(1.0, tpsDistance / 2.5))
+        .add(new THREE.Vector3(0, 0.15, 0));
+
+      const rayVec = desiredPos.clone().sub(headOrigin);
+      const rayLen = rayVec.length();
+      const rayDir = rayVec.clone().normalize();
+      const hitDist = resolveSpringArmDistance(headOrigin.x, headOrigin.y, headOrigin.z, rayDir.x, rayDir.y, rayDir.z, rayLen);
+
+      const targetDist = (hitDist < rayLen) ? Math.max(0.5, hitDist - 0.25) : rayLen;
+      currentTpsDist += (targetDist - currentTpsDist) * Math.min(1, dt * 16.0);
+
+      camera.position.copy(headOrigin).addScaledVector(rayDir, currentTpsDist);
+      const lookTarget = headOrigin.clone().addScaledVector(lookDir, 12.0);
+      camera.lookAt(lookTarget);
+    }
+
+    animateRig(playerAvatar, playerAnim, dt);
+
   } else if (camMode === 'talk') {
     if (activeNPC) updateTalkFraming(activeNPC);
     camera.position.lerp(camTargetPos, Math.min(1, dt * 4));
@@ -4335,10 +4888,19 @@ function animate() {
     camera.lookAt(camLook);
     playerAnim.idleT += dt; playerAnim.talk = true; animateRig(playerAvatar, playerAnim, dt);
   } else if (camMode === 'return') {
-    const dest = savedPos;
+    const dest = (camPerspective === 'fps') ? new THREE.Vector3(playerPos.x, EYE, playerPos.z) : savedPos;
     camera.position.lerp(dest, Math.min(1, dt * 5));
-    if (camera.position.distanceTo(dest) < 0.15) { camera.position.copy(dest); yaw = savedYaw; pitch = savedPitch; camMode = 'free'; playerAvatar.root.visible = false; crosshair.classList.remove('hide'); }
-    else { const dir = new THREE.Vector3(-Math.sin(savedYaw) * Math.cos(savedPitch), Math.sin(savedPitch), -Math.cos(savedYaw) * Math.cos(savedPitch)); camLook.lerp(camera.position.clone().add(dir), Math.min(1, dt * 5)); camera.lookAt(camLook); }
+    if (camera.position.distanceTo(dest) < 0.15) {
+      camera.position.copy(dest);
+      yaw = savedYaw; pitch = savedPitch;
+      camMode = 'free';
+      if (camPerspective === 'fps' && !activeStation) playerAvatar.root.visible = false;
+      crosshair.classList.remove('hide');
+    } else {
+      const dir = new THREE.Vector3(-Math.sin(savedYaw) * Math.cos(savedPitch), Math.sin(savedPitch), -Math.cos(savedYaw) * Math.cos(savedPitch));
+      camLook.lerp(camera.position.clone().add(dir), Math.min(1, dt * 5));
+      camera.lookAt(camLook);
+    }
   }
 
   // School Routine & NPC Update (Auto-pauses during active NPC dialogue & story narration)
@@ -5082,8 +5644,8 @@ function begin(mode) {
   else canTalk = false;
   overlay.style.display = 'none';
   if (cv.requestPointerLock) { try { cv.requestPointerLock(); } catch {} }
-  if (mode === 'story') { camera.position.set(0, EYE, 95); yaw = 0; enterScene(story.i >= 0 ? story.i : 0); }
-  else { camera.position.set(0, EYE, 40); yaw = 0; updateObjective(); }
+  if (mode === 'story') { camera.position.set(0, EYE, 95); playerPos.set(0, 0, 95); yaw = 0; enterScene(story.i >= 0 ? story.i : 0); }
+  else { camera.position.set(0, EYE, 40); playerPos.set(0, 0, 40); yaw = 0; updateObjective(); }
 }
 $('story-btn').onclick = () => begin('story');
 $('enter-btn').onclick = () => begin('free');
