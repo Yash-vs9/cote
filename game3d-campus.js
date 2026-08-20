@@ -151,6 +151,706 @@ soundChip.onclick = toggleTTS;
 refreshSoundChip();
 $('topright').appendChild(soundChip);
 
+// =========================================================================
+// CAMPUS PROCEDURAL WEB AUDIO SOUND ENGINE (HIGH-FIDELITY SFX & BIOMES)
+// =========================================================================
+export const CampusAudioEngine = {
+  ctx: null,
+  masterGain: null,
+  sfxGain: null,
+  ambGain: null,
+  reverbNode: null,
+  reverbGain: null,
+  indoorFilter: null,
+  isMuted: load('cote3dAudioMuted', false),
+  volume: load('cote3dAudioVol', 0.85),
+  sfxVol: load('cote3dSFXVol', 0.85),
+  ambVol: load('cote3dAmbVol', 0.65),
+  initialized: false,
+
+  // Biome Nodes
+  fountainNode: null,
+  fountainGain: null,
+  oceanNode: null,
+  oceanGain: null,
+  rainNode: null,
+  rainGain: null,
+  windNode: null,
+  windGain: null,
+  cricketNode: null,
+  cricketGain: null,
+
+  // Footstep Tracking
+  footstepTimer: 0,
+  footstepSide: 0, // 0 = left, 1 = right
+  _lastThunder: 0,
+  _isIndoors: false,
+
+  init() {
+    if (this.initialized) return;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      this.ctx = new AudioCtx();
+
+      // Master Bus
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.isMuted ? 0 : this.volume;
+      this.masterGain.connect(this.ctx.destination);
+
+      // SFX Bus
+      this.sfxGain = this.ctx.createGain();
+      this.sfxGain.gain.value = this.sfxVol;
+      this.sfxGain.connect(this.masterGain);
+
+      // Ambiance Bus & Indoor Occlusion Lowpass Filter
+      this.ambGain = this.ctx.createGain();
+      this.ambGain.gain.value = this.ambVol;
+
+      this.indoorFilter = this.ctx.createBiquadFilter();
+      this.indoorFilter.type = 'lowpass';
+      this.indoorFilter.frequency.value = 20000; // Open by default
+      this.indoorFilter.connect(this.ambGain);
+      this.ambGain.connect(this.masterGain);
+
+      // Procedural Acoustic Courtyard Reverb Bus (0.85s RT60)
+      this.initProceduralReverb();
+
+      // Spatial Biomes Generator
+      this.initAmbianceGenerators();
+      this.initialized = true;
+    } catch (e) {
+      console.warn('CampusAudioEngine init error:', e);
+    }
+  },
+
+  initProceduralReverb() {
+    if (!this.ctx) return;
+    try {
+      const rate = this.ctx.sampleRate;
+      const length = Math.floor(rate * 0.9); // 0.9s impulse
+      const impulse = this.ctx.createBuffer(2, length, rate);
+      const left = impulse.getChannelData(0);
+      const right = impulse.getChannelData(1);
+
+      for (let i = 0; i < length; i++) {
+        const decay = Math.exp(-i / (rate * 0.22));
+        left[i] = (Math.random() * 2 - 1) * decay;
+        right[i] = (Math.random() * 2 - 1) * decay;
+      }
+
+      this.reverbNode = this.ctx.createConvolver();
+      this.reverbNode.buffer = impulse;
+
+      this.reverbGain = this.ctx.createGain();
+      this.reverbGain.gain.value = 0.28;
+      this.reverbNode.connect(this.reverbGain);
+      this.reverbGain.connect(this.masterGain);
+    } catch (e) {
+      console.warn('Procedural reverb creation error:', e);
+    }
+  },
+
+  resumeOnGesture() {
+    if (!this.initialized) this.init();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+  },
+
+  toggleMute() {
+    this.resumeOnGesture();
+    this.isMuted = !this.isMuted;
+    save('cote3dAudioMuted', this.isMuted);
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(this.isMuted ? 0 : this.volume, this.ctx.currentTime, 0.05);
+    }
+    return this.isMuted;
+  },
+
+  setVolume(vol) {
+    this.volume = Math.max(0, Math.min(1, vol));
+    save('cote3dAudioVol', this.volume);
+    if (this.masterGain && !this.isMuted && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.05);
+    }
+  },
+
+  setSFXVolume(vol) {
+    this.sfxVol = Math.max(0, Math.min(1, vol));
+    save('cote3dSFXVol', this.sfxVol);
+    if (this.sfxGain && this.ctx) {
+      this.sfxGain.gain.setTargetAtTime(this.sfxVol, this.ctx.currentTime, 0.05);
+    }
+  },
+
+  setAmbVolume(vol) {
+    this.ambVol = Math.max(0, Math.min(1, vol));
+    save('cote3dAmbVol', this.ambVol);
+    if (this.ambGain && this.ctx) {
+      this.ambGain.gain.setTargetAtTime(this.ambVol, this.ctx.currentTime, 0.05);
+    }
+  },
+
+  // 1. Westminster School Period Bell Chimes (Tubular Bell Physical Synthesis)
+  playWestminsterChime() {
+    if (this.isMuted) return;
+    this.resumeOnGesture();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime + 0.05;
+
+    // 4 Notes: E4 (329.63), G4 (392.00), F4 (349.23), B3 (246.94)
+    const notes = [
+      { freq: 329.63, time: 0.00, pan: -0.15 },
+      { freq: 392.00, time: 0.55, pan: 0.15 },
+      { freq: 349.23, time: 1.10, pan: -0.10 },
+      { freq: 246.94, time: 1.65, pan: 0.10 }
+    ];
+
+    notes.forEach(n => {
+      const startTime = now + n.time;
+      const duration = 2.4;
+
+      // Stereo Panner
+      let panner = null;
+      if (this.ctx.createStereoPanner) {
+        panner = this.ctx.createStereoPanner();
+        panner.pan.setValueAtTime(n.pan, startTime);
+      }
+
+      // 1. Strike transient (clapper impact noise)
+      const strikeBuf = this.ctx.createBuffer(1, Math.floor(this.ctx.sampleRate * 0.015), this.ctx.sampleRate);
+      const strikeData = strikeBuf.getChannelData(0);
+      for (let i = 0; i < strikeData.length; i++) strikeData[i] = Math.random() * 2 - 1;
+      const strikeSource = this.ctx.createBufferSource();
+      strikeSource.buffer = strikeBuf;
+      const strikeFilter = this.ctx.createBiquadFilter();
+      strikeFilter.type = 'bandpass';
+      strikeFilter.frequency.setValueAtTime(2400, startTime);
+      strikeFilter.Q.setValueAtTime(3.0, startTime);
+      const strikeGain = this.ctx.createGain();
+      strikeGain.gain.setValueAtTime(0.35, startTime);
+      strikeGain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.02);
+      strikeSource.connect(strikeFilter);
+      strikeFilter.connect(strikeGain);
+
+      // 2. Fundamental & Overtones (1.0, 2.002, 2.756, 5.404)
+      const partials = [
+        { mult: 1.0, gain: 0.40, decay: duration },
+        { mult: 2.002, gain: 0.22, decay: duration * 0.85 },
+        { mult: 2.756, gain: 0.15, decay: duration * 0.70 },
+        { mult: 5.404, gain: 0.08, decay: duration * 0.45 }
+      ];
+
+      const noteSumGain = this.ctx.createGain();
+      noteSumGain.gain.setValueAtTime(1.0, startTime);
+
+      partials.forEach(p => {
+        const osc = this.ctx.createOscillator();
+        osc.type = p.mult === 1.0 ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(n.freq * p.mult, startTime);
+
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.0001, startTime);
+        g.gain.exponentialRampToValueAtTime(p.gain, startTime + 0.03);
+        g.gain.exponentialRampToValueAtTime(0.0001, startTime + p.decay);
+
+        osc.connect(g);
+        g.connect(noteSumGain);
+        osc.start(startTime);
+        osc.stop(startTime + p.decay);
+      });
+
+      strikeGain.connect(noteSumGain);
+
+      if (panner) {
+        noteSumGain.connect(panner);
+        panner.connect(this.sfxGain);
+        if (this.reverbNode) panner.connect(this.reverbNode);
+      } else {
+        noteSumGain.connect(this.sfxGain);
+        if (this.reverbNode) noteSumGain.connect(this.reverbNode);
+      }
+
+      strikeSource.start(startTime);
+      strikeSource.stop(startTime + 0.03);
+    });
+  },
+
+  // 2. Hyper-Realistic Material Footstep Engine
+  detectSurface(x, z) {
+    if (x >= -68 && x <= -56 && z >= -25 && z <= -15) return 'wood'; // Class 1-D
+    if (x >= -70 && x <= -44 && z >= 10 && z <= 34) return 'wood';   // Library
+    if (x >= 34 && x <= 68 && z >= 10 && z <= 34) return 'wood';     // Gymnasium
+    if (x >= -30 && x <= 30 && z >= -69 && z <= -43) return 'tile';  // Academic Hall
+    if (x >= 34 && x <= 68 && z >= -34 && z <= -10) return 'tile';   // Cafeteria
+    if (z >= 34 && x >= 20) return 'tile';                           // Commercial Mall / Café
+    if (z <= -100) return 'gravel';                                  // Seaside Promenade
+    if (x >= -24 && x <= 24 && z >= -18 && z <= 32) return 'grass';  // Courtyard & Park
+    return 'concrete';
+  },
+
+  checkIndoors(x, z) {
+    // Class 1-D, Library, Gym, Academic Hall, Cafeteria, Keyaki Mall
+    if (x >= -72 && x <= -40 && z >= -28 && z <= 36) return true;
+    if (x >= 30 && x <= 72 && z >= -36 && z <= 36) return true;
+    if (x >= -32 && x <= 32 && z >= -72 && z <= -40) return true;
+    if (x >= 18 && x <= 72 && z >= 40 && z <= 95) return true;
+    return false;
+  },
+
+  playFootstep(surface, isSprint, rainIntensity) {
+    if (this.isMuted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.footstepSide = 1 - this.footstepSide;
+    const panVal = this.footstepSide === 0 ? -0.22 : 0.22;
+    const pitchJitter = 0.96 + Math.random() * 0.08;
+
+    let panner = null;
+    if (this.ctx.createStereoPanner) {
+      panner = this.ctx.createStereoPanner();
+      panner.pan.setValueAtTime(panVal, now);
+    }
+
+    const bufferSize = Math.floor(this.ctx.sampleRate * 0.06);
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    noise.playbackRate.setValueAtTime(pitchJitter, now);
+
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+
+    if (surface === 'wood') {
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime((isSprint ? 1450 : 1150) * pitchJitter, now);
+      filter.Q.setValueAtTime(2.4, now);
+      gain.gain.setValueAtTime(0.24, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+    } else if (surface === 'grass') {
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(700 * pitchJitter, now);
+      gain.gain.setValueAtTime(0.19, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+    } else if (surface === 'gravel') {
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(1900 * pitchJitter, now);
+      gain.gain.setValueAtTime(0.23, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
+    } else if (surface === 'tile') {
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime((isSprint ? 3200 : 2700) * pitchJitter, now);
+      filter.Q.setValueAtTime(3.2, now);
+      gain.gain.setValueAtTime(0.29, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.042);
+    } else { // Concrete
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime((isSprint ? 2200 : 1800) * pitchJitter, now);
+      filter.Q.setValueAtTime(1.8, now);
+      gain.gain.setValueAtTime(0.26, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.048);
+    }
+
+    // Low-frequency heel thump
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime((surface === 'wood' ? 175 : 120) * pitchJitter, now);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.04);
+    const oscGain = this.ctx.createGain();
+    oscGain.gain.setValueAtTime(0.16, now);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    osc.connect(oscGain);
+
+    const stepOut = this.ctx.createGain();
+    gain.connect(stepOut);
+    oscGain.connect(stepOut);
+
+    // Wet puddle splash layer during rain
+    if (rainIntensity > 0.18) {
+      const splashFilter = this.ctx.createBiquadFilter();
+      splashFilter.type = 'highpass';
+      splashFilter.frequency.setValueAtTime(3400, now);
+      const splashGain = this.ctx.createGain();
+      splashGain.gain.setValueAtTime(0.14 * Math.min(1, rainIntensity), now);
+      splashGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+      noise.connect(splashFilter);
+      splashFilter.connect(splashGain);
+      splashGain.connect(stepOut);
+    }
+
+    if (panner) {
+      stepOut.connect(panner);
+      panner.connect(this.sfxGain);
+      if (this.reverbNode && (surface === 'tile' || surface === 'wood')) {
+        panner.connect(this.reverbNode);
+      }
+    } else {
+      stepOut.connect(this.sfxGain);
+      if (this.reverbNode && (surface === 'tile' || surface === 'wood')) {
+        stepOut.connect(this.reverbNode);
+      }
+    }
+
+    noise.start(now);
+    noise.stop(now + 0.07);
+    osc.start(now);
+    osc.stop(now + 0.05);
+  },
+
+  stepFootstep(dt, isMoving, isSprint, x, z, rainIntensity) {
+    if (!isMoving) {
+      this.footstepTimer = 0;
+      return;
+    }
+    const interval = isSprint ? 0.28 : 0.44;
+    this.footstepTimer += dt;
+    if (this.footstepTimer >= interval) {
+      this.footstepTimer = 0;
+      const surface = this.detectSurface(x, z);
+      this.playFootstep(surface, isSprint, rainIntensity);
+    }
+  },
+
+  // 3. Continuous Spatial Ambiance Generator
+  initAmbianceGenerators() {
+    if (!this.ctx) return;
+    const bufSize = this.ctx.sampleRate * 2;
+    const pinkBuf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+    const out = pinkBuf.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      out[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.05;
+      b6 = white * 0.115926;
+    }
+
+    // 1. Fountain Ambiance (Central Park)
+    this.fountainNode = this.ctx.createBufferSource();
+    this.fountainNode.buffer = pinkBuf;
+    this.fountainNode.loop = true;
+    const fFilter = this.ctx.createBiquadFilter();
+    fFilter.type = 'bandpass';
+    fFilter.frequency.value = 1100;
+    fFilter.Q.value = 0.8;
+    this.fountainGain = this.ctx.createGain();
+    this.fountainGain.gain.value = 0;
+    this.fountainNode.connect(fFilter);
+    fFilter.connect(this.fountainGain);
+    this.fountainGain.connect(this.indoorFilter);
+    try { this.fountainNode.start(0); } catch {}
+
+    // 2. Ocean Waves (Seaside Boulevard)
+    this.oceanNode = this.ctx.createBufferSource();
+    this.oceanNode.buffer = pinkBuf;
+    this.oceanNode.loop = true;
+    const oFilter = this.ctx.createBiquadFilter();
+    oFilter.type = 'lowpass';
+    oFilter.frequency.value = 420;
+    this.oceanGain = this.ctx.createGain();
+    this.oceanGain.gain.value = 0;
+    this.oceanNode.connect(oFilter);
+    oFilter.connect(this.oceanGain);
+    this.oceanGain.connect(this.indoorFilter);
+    try { this.oceanNode.start(0); } catch {}
+
+    // 3. Rain Loop
+    this.rainNode = this.ctx.createBufferSource();
+    this.rainNode.buffer = pinkBuf;
+    this.rainNode.loop = true;
+    const rFilter = this.ctx.createBiquadFilter();
+    rFilter.type = 'bandpass';
+    rFilter.frequency.value = 1600;
+    rFilter.Q.value = 0.5;
+    this.rainGain = this.ctx.createGain();
+    this.rainGain.gain.value = 0;
+    this.rainNode.connect(rFilter);
+    rFilter.connect(this.rainGain);
+    this.rainGain.connect(this.indoorFilter);
+    try { this.rainNode.start(0); } catch {}
+
+    // 4. Wind Breeze Loop
+    this.windNode = this.ctx.createBufferSource();
+    this.windNode.buffer = pinkBuf;
+    this.windNode.loop = true;
+    const wFilter = this.ctx.createBiquadFilter();
+    wFilter.type = 'lowpass';
+    wFilter.frequency.value = 350;
+    this.windGain = this.ctx.createGain();
+    this.windGain.gain.value = 0;
+    this.windNode.connect(wFilter);
+    wFilter.connect(this.windGain);
+    this.windGain.connect(this.indoorFilter);
+    try { this.windNode.start(0); } catch {}
+
+    // 5. Japanese Summer Evening Cicadas & Crickets (Dusk / Night)
+    this.cricketGain = this.ctx.createGain();
+    this.cricketGain.gain.value = 0;
+    this.cricketGain.connect(this.indoorFilter);
+  },
+
+  updateAmbiance(dt, px, pz, rainLevel, flash, clockMinute) {
+    if (!this.initialized || this.isMuted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    // Indoor vs Outdoor Occlusion Filter Transition
+    const indoors = this.checkIndoors(px, pz);
+    if (indoors !== this._isIndoors) {
+      this._isIndoors = indoors;
+      const targetCutoff = indoors ? 650 : 20000;
+      this.indoorFilter.frequency.setTargetAtTime(targetCutoff, now, 0.35);
+    }
+
+    // Fountain distance from (0, 8)
+    const distFount = Math.hypot(px - 0, pz - 8);
+    const targetFountGain = Math.max(0, Math.min(0.35, (1 - distFount / 45) * 0.35));
+    if (this.fountainGain) {
+      this.fountainGain.gain.setTargetAtTime(targetFountGain, now, 0.2);
+    }
+
+    // Ocean distance from (0, -140)
+    const distOcean = Math.hypot(px - 0, pz - (-140));
+    const waveCycle = Math.sin(now * 1.15) * 0.5 + 0.5;
+    const targetOceanGain = Math.max(0, Math.min(0.42, (1 - distOcean / 95) * (0.22 + 0.2 * waveCycle)));
+    if (this.oceanGain) {
+      this.oceanGain.gain.setTargetAtTime(targetOceanGain, now, 0.2);
+    }
+
+    // Rain intensity
+    const targetRainGain = Math.min(0.52, (rainLevel || 0) * 0.42);
+    if (this.rainGain) {
+      this.rainGain.gain.setTargetAtTime(targetRainGain, now, 0.2);
+    }
+
+    // Wind breeze intensity (higher in storms and sunsets)
+    const targetWind = (rainLevel > 0.5 ? 0.28 : 0.08) * (Math.sin(now * 0.4) * 0.3 + 0.7);
+    if (this.windGain) {
+      this.windGain.gain.setTargetAtTime(targetWind, now, 0.4);
+    }
+
+    // Evening / Night Crickets (18:30 to 05:30)
+    const isNightAmbiance = (clockMinute >= 1110 || clockMinute < 330) && !indoors;
+    if (isNightAmbiance && Math.random() < dt * 1.2 && now - (this._lastCricket || 0) > 1.8) {
+      this._lastCricket = now;
+      this.playCricketChirp();
+    }
+
+    // Physics-Based Thunder crackle with speed of sound delay
+    if (flash > 0.8 && (!this._lastThunder || now - this._lastThunder > 4.5)) {
+      this._lastThunder = now;
+      const strikeDist = 100 + Math.random() * 400; // 100m to 500m
+      const soundDelay = strikeDist / 340; // ~0.3s to 1.5s delay
+      setTimeout(() => { this.playThunder(strikeDist); }, soundDelay * 1000);
+    }
+  },
+
+  playCricketChirp() {
+    if (this.isMuted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(4600 + Math.random() * 300, now);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    for (let i = 0; i < 3; i++) {
+      const t = now + i * 0.035;
+      gain.gain.setValueAtTime(0.045, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.025);
+    }
+
+    osc.connect(gain);
+    gain.connect(this.ambGain);
+    osc.start(now);
+    osc.stop(now + 0.14);
+  },
+
+  playThunder(dist = 250) {
+    if (this.isMuted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(75, now);
+    osc.frequency.exponentialRampToValueAtTime(25, now + 1.8);
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(Math.max(60, 220 - dist * 0.3), now);
+
+    const gain = this.ctx.createGain();
+    const vol = Math.max(0.15, Math.min(0.55, 1.0 - dist / 600));
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 2.0);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.sfxGain);
+
+    if (this.reverbNode) gain.connect(this.reverbNode);
+
+    osc.start(now);
+    osc.stop(now + 2.2);
+  },
+
+  // 4. Interactive UI Sound Effects
+  playUIClick() {
+    if (this.isMuted || !this.ctx) return;
+    this.resumeOnGesture();
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(400, now + 0.03);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(now);
+    osc.stop(now + 0.04);
+  },
+
+  playDialogueChirp() {
+    if (this.isMuted || !this.ctx) return;
+    this.resumeOnGesture();
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(1760, now + 0.045);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    osc.connect(gain);
+    gain.connect(this.sfxGain);
+    osc.start(now);
+    osc.stop(now + 0.055);
+  },
+
+  playObjectiveJingle() {
+    if (this.isMuted || !this.ctx) return;
+    this.resumeOnGesture();
+    const now = this.ctx.currentTime;
+    [523.25, 659.25, 783.99, 1046.50].forEach((freq, idx) => {
+      const startTime = now + idx * 0.10;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, startTime);
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.001, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.25, startTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.45);
+      osc.connect(gain);
+      gain.connect(this.sfxGain);
+      if (this.reverbNode) gain.connect(this.reverbNode);
+      osc.start(startTime);
+      osc.stop(startTime + 0.5);
+    });
+  }
+};
+window.CampusAudioEngine = CampusAudioEngine;
+
+const audioChip = document.createElement('div');
+audioChip.style.cssText = 'background:rgba(13,16,24,.88);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:13px;backdrop-filter:blur(10px);pointer-events:auto;cursor:pointer;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.5);';
+audioChip.title = 'Campus SFX & Chimes on/off (K)';
+function refreshAudioChip() { audioChip.textContent = CampusAudioEngine.isMuted ? '🔇 SFX Muted' : '🔊 SFX on'; }
+function toggleAudio() {
+  CampusAudioEngine.toggleMute();
+  refreshAudioChip();
+  const btn = $('atm-mute-btn');
+  if (btn) btn.textContent = CampusAudioEngine.isMuted ? '🔇 SFX: Muted' : '🔊 SFX: ON';
+  showToast(CampusAudioEngine.isMuted ? '🔇 Campus SFX muted' : '🔊 Campus SFX on', 2200);
+}
+audioChip.onclick = toggleAudio;
+refreshAudioChip();
+$('topright').appendChild(audioChip);
+
+const studioChip = document.createElement('div');
+studioChip.style.cssText = 'background:rgba(13,16,24,.88);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:13px;backdrop-filter:blur(10px);pointer-events:auto;cursor:pointer;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.5);';
+studioChip.title = 'Open Atmosphere & Audio Studio (F4)';
+studioChip.innerHTML = '🎛️ Studio';
+function toggleAtmosphereStudio() {
+  const p = $('atmosphere-panel');
+  if (p) p.style.display = (p.style.display === 'flex' ? 'none' : 'flex');
+}
+studioChip.onclick = toggleAtmosphereStudio;
+$('topright').appendChild(studioChip);
+window.toggleAtmosphereStudio = toggleAtmosphereStudio;
+
+function initAtmosphereStudio() {
+  const p = $('atmosphere-panel');
+  const closeBtn = $('atm-close');
+  if (closeBtn) closeBtn.onclick = () => { if (p) p.style.display = 'none'; };
+
+  const timeSlider = $('atm-time-slider');
+  const timeVal = $('atm-time-val');
+  if (timeSlider) {
+    timeSlider.oninput = (e) => {
+      const h = parseFloat(e.target.value);
+      const hh = String(Math.floor(h)).padStart(2, '0');
+      const mm = String(Math.floor((h % 1) * 60)).padStart(2, '0');
+      if (timeVal) timeVal.textContent = `${hh}:${mm}`;
+      window.skipToTime(h);
+    };
+  }
+
+  const masterSlider = $('atm-master-slider');
+  const masterVal = $('atm-master-val');
+  if (masterSlider) {
+    masterSlider.oninput = (e) => {
+      const v = parseFloat(e.target.value);
+      if (masterVal) masterVal.textContent = `${Math.round(v * 100)}%`;
+      CampusAudioEngine.setVolume(v);
+    };
+  }
+
+  const sfxSlider = $('atm-sfx-slider');
+  const sfxVal = $('atm-sfx-val');
+  if (sfxSlider) {
+    sfxSlider.oninput = (e) => {
+      const v = parseFloat(e.target.value);
+      if (sfxVal) sfxVal.textContent = `${Math.round(v * 100)}%`;
+      CampusAudioEngine.setSFXVolume(v);
+    };
+  }
+
+  const ambSlider = $('atm-amb-slider');
+  const ambVal = $('atm-amb-val');
+  if (ambSlider) {
+    ambSlider.oninput = (e) => {
+      const v = parseFloat(e.target.value);
+      if (ambVal) ambVal.textContent = `${Math.round(v * 100)}%`;
+      CampusAudioEngine.setAmbVolume(v);
+    };
+  }
+}
+window.toggleAudioStudioMute = toggleAudio;
+
+// Emissive Lamp & Night Lighting Management
+const campusNightLamps = [];
+const campusNightWindows = [];
+const campusNightPointLights = [];
+
+export function registerNightEmissive(mesh, type = 'lamp') {
+  if (!mesh) return;
+  if (type === 'lamp') campusNightLamps.push(mesh);
+  else if (type === 'window') campusNightWindows.push(mesh);
+}
+export function registerNightLight(light) {
+  if (light) campusNightPointLights.push(light);
+}
+
 // ---------- Three.js WebGL Engine ----------
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xd6e8f8, 140, 520);
@@ -196,6 +896,93 @@ const skyMat = new THREE.ShaderMaterial({
 });
 const skyDome = new THREE.Mesh(new THREE.SphereGeometry(650, 32, 16), skyMat);
 scene.add(skyDome);
+
+// Celestial Sun and Moon Objects
+const celestialGroup = new THREE.Group();
+scene.add(celestialGroup);
+
+// Visible Sun Mesh & Corona Glow
+const sunMat = new THREE.MeshBasicMaterial({ color: 0xfffae0, fog: false });
+const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(14, 16, 16), sunMat);
+celestialGroup.add(sunMesh);
+
+const sunGlowMat = new THREE.ShaderMaterial({
+  uniforms: { uColor: { value: new THREE.Color(0xffd580) } },
+  vertexShader: 'varying vec3 vNorm; void main(){ vNorm = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'uniform vec3 uColor; varying vec3 vNorm; void main(){ float i = pow(0.65 - dot(vNorm, vec3(0, 0, 1.0)), 2.0); gl_FragColor = vec4(uColor, i * 0.85); }',
+  side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false
+});
+const sunGlow = new THREE.Mesh(new THREE.SphereGeometry(22, 16, 16), sunGlowMat);
+sunMesh.add(sunGlow);
+
+// Visible Moon Mesh & Ethereal Corona Glow
+const moonMat = new THREE.MeshBasicMaterial({ color: 0xd8e6ff, fog: false });
+const moonMesh = new THREE.Mesh(new THREE.SphereGeometry(11, 16, 16), moonMat);
+celestialGroup.add(moonMesh);
+
+const moonGlowMat = new THREE.ShaderMaterial({
+  uniforms: { uColor: { value: new THREE.Color(0x93c5fd) } },
+  vertexShader: 'varying vec3 vNorm; void main(){ vNorm = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'uniform vec3 uColor; varying vec3 vNorm; void main(){ float i = pow(0.7 - dot(vNorm, vec3(0, 0, 1.0)), 2.2); gl_FragColor = vec4(uColor, i * 0.7); }',
+  side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false
+});
+const moonGlow = new THREE.Mesh(new THREE.SphereGeometry(18, 16, 16), moonGlowMat);
+moonMesh.add(moonGlow);
+
+// Twinkling Celestial Starfield (1000 Stars)
+const STAR_COUNT = 1000;
+const starGeo = new THREE.BufferGeometry();
+const starPos = new Float32Array(STAR_COUNT * 3);
+const starSizes = new Float32Array(STAR_COUNT);
+const starPhases = new Float32Array(STAR_COUNT);
+
+for (let i = 0; i < STAR_COUNT; i++) {
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(Math.random() * 0.92 + 0.08);
+  const r = 620;
+  starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+  starPos[i * 3 + 1] = r * Math.cos(phi);
+  starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+  starSizes[i] = 1.5 + Math.random() * 2.5;
+  starPhases[i] = Math.random() * Math.PI * 2;
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+starGeo.setAttribute('aSize', new THREE.BufferAttribute(starSizes, 1));
+starGeo.setAttribute('aPhase', new THREE.BufferAttribute(starPhases, 1));
+
+const starMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uOpacity: { value: 0 }
+  },
+  vertexShader: `
+    uniform float uTime;
+    attribute float aSize;
+    attribute float aPhase;
+    varying float vAlpha;
+    void main() {
+      vAlpha = sin(uTime * 2.5 + aPhase) * 0.35 + 0.65;
+      vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = aSize * (350.0 / -mvPos.z);
+      gl_Position = projectionMatrix * mvPos;
+    }
+  `,
+  fragmentShader: `
+    uniform float uOpacity;
+    varying float vAlpha;
+    void main() {
+      float d = length(gl_PointCoord - vec2(0.5));
+      if (d > 0.5) discard;
+      float intensity = smoothstep(0.5, 0.0, d) * vAlpha * uOpacity;
+      gl_FragColor = vec4(0.92, 0.96, 1.0, intensity);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  fog: false
+});
+const starField = new THREE.Points(starGeo, starMat);
+scene.add(starField);
 
 // ---------- Material & Texture Helpers ----------
 const std = (o) => new THREE.MeshStandardMaterial(o);
@@ -1131,7 +1918,14 @@ function buildCentralPark() {
   const lampSpots = [[-10, 18], [10, 18], [-10, -12], [10, -12], [-40, 8], [40, 8], [-10, 38], [10, 38]];
   lampSpots.forEach(([lx, lz]) => {
     makeBox(0.25, 4.2, 0.25, std({ color: 0x3a3f47 }), lx, 2.1, lz, g);
-    makeBox(0.6, 0.2, 0.4, std({ color: 0xffffff, emissive: 0xfff3d4, emissiveIntensity: 1.8 }), lx, 4.2, lz, g);
+    const bulbMat = std({ color: 0xfff3d4, emissive: 0xffd97d, emissiveIntensity: 0.0 });
+    const bulb = makeBox(0.6, 0.2, 0.4, bulbMat, lx, 4.2, lz, g);
+    registerNightEmissive(bulb, 'lamp');
+    const pl = new THREE.PointLight(0xffeedd, 0, 16, 2);
+    pl.position.set(lx, 4.0, lz);
+    pl.userData.baseIntensity = 18;
+    g.add(pl);
+    registerNightLight(pl);
     addCollider(lx, lz + 8, 0.5, 0.5);
   });
 }
@@ -1168,7 +1962,9 @@ function buildAcademicBuilding() {
   // Soft interior light
   const lobbyLight = new THREE.PointLight(0xfff8ee, 30, 20, 2);
   lobbyLight.position.set(0, 3.8, bZ + 6);
+  lobbyLight.userData.baseIntensity = 30;
   g.add(lobbyLight);
+  registerNightLight(lobbyLight);
 
   // Exterior glass facade & structural pillars
   const rows = 4, bays = 12;
@@ -1179,8 +1975,10 @@ function buildAcademicBuilding() {
       const by = 2.2 + 4.25 * r;
       // Skip doorway bay on ground floor
       if (r === 0 && Math.abs(bx) < 3.5) continue;
-      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, bZ + BLD.D / 2, g, false);
-      makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, bZ - BLD.D / 2, g, false);
+      const win1 = makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, bZ + BLD.D / 2, g, false);
+      const win2 = makeBox(bayW - 0.1, glassH, 0.05, M.glass, bx, by, bZ - BLD.D / 2, g, false);
+      registerNightEmissive(win1, 'window');
+      registerNightEmissive(win2, 'window');
     }
   }
 
@@ -1677,6 +2475,19 @@ function buildResidentialSector() {
   addCollider(-34 - 10, 58 - 14, 8, 1);
   addCollider(-34 + 10, 58 - 14, 8, 1);
 
+  const dormLamps = [[-26, 44], [-44, 44], [-26, 68], [-44, 68]];
+  dormLamps.forEach(([lx, lz]) => {
+    makeBox(0.25, 4.2, 0.25, std({ color: 0x3a3f47 }), lx, 2.1, lz, g);
+    const bulbMat = std({ color: 0xfff3d4, emissive: 0xffd97d, emissiveIntensity: 0.0 });
+    const bulb = makeBox(0.6, 0.2, 0.4, bulbMat, lx, 4.2, lz, g);
+    registerNightEmissive(bulb, 'lamp');
+    const pl = new THREE.PointLight(0xffeedd, 0, 16, 2);
+    pl.position.set(lx, 4.0, lz);
+    pl.userData.baseIntensity = 18;
+    g.add(pl);
+    registerNightLight(pl);
+  });
+
   makeLabel('DORMITORY TOWER', -34, 20.0, 58 - 14.5, 0xffffff, 2.8);
   makeLabel('ROOM 401', -50, 3.2, 58, 0xffffff, 1.8);
 
@@ -1735,13 +2546,26 @@ function buildCommercialSector() {
   addCollider(54 + 6.0, 54, 1, 10);
   g.add(cafeG);
 
+  const comLamps = [[26, 44], [46, 44], [60, 44], [26, 68], [60, 68]];
+  comLamps.forEach(([lx, lz]) => {
+    makeBox(0.25, 4.2, 0.25, std({ color: 0x3a3f47 }), lx, 2.1, lz, g);
+    const bulbMat = std({ color: 0xfff3d4, emissive: 0xffd97d, emissiveIntensity: 0.0 });
+    const bulb = makeBox(0.6, 0.2, 0.4, bulbMat, lx, 4.2, lz, g);
+    registerNightEmissive(bulb, 'lamp');
+    const pl = new THREE.PointLight(0xffeedd, 0, 16, 2);
+    pl.position.set(lx, 4.0, lz);
+    pl.userData.baseIntensity = 18;
+    g.add(pl);
+    registerNightLight(pl);
+  });
+
   const mallG = new THREE.Group();
   mallG.position.set(44, 0, 78);
 
   const M = {
     concreteDark: std({ color: 0x3a3f47, roughness: 0.5 }),
     chrome: std({ color: 0xd0d5dd, roughness: 0.2, metalness: 0.9 }),
-    glass: phys({ color: 0x9ec0db, transmission: 0.9, roughness: 0.1, ior: 1.5 }),
+    glass: phys({ color: 0x9ec0db, transmission: 0.9, roughness: 0.1, ior: 1.5, emissive: 0xffea9f, emissiveIntensity: 0.0 }),
     signGold: std({ map: textSignTexture('KEYAKI MALL', 120), emissive: 0xffffff, emissiveIntensity: 0.8 })
   };
 
@@ -1755,8 +2579,10 @@ function buildCommercialSector() {
   for (let t = 0; t < BLD.tiers; t++) {
     for (let b = 0; b < bays; b++) {
       const bx = -BLD.L / 2 + bayW * (b + 0.5);
-      makeBox(bayW - 0.15, 5.5, 0.05, M.glass, bx, 3.2 + 6.0 * t, -BLD.D / 2, mallG, false);
-      makeBox(bayW - 0.15, 5.5, 0.05, M.glass, bx, 3.2 + 6.0 * t, BLD.D / 2, mallG, false);
+      const w1 = makeBox(bayW - 0.15, 5.5, 0.05, M.glass, bx, 3.2 + 6.0 * t, -BLD.D / 2, mallG, false);
+      const w2 = makeBox(bayW - 0.15, 5.5, 0.05, M.glass, bx, 3.2 + 6.0 * t, BLD.D / 2, mallG, false);
+      registerNightEmissive(w1, 'window');
+      registerNightEmissive(w2, 'window');
     }
   }
 
@@ -1764,6 +2590,7 @@ function buildCommercialSector() {
   const pyrMesh = new THREE.Mesh(pyrGeo, M.glass);
   pyrMesh.position.y = BLD.H + 4.5;
   pyrMesh.rotation.y = Math.PI / 4;
+  registerNightEmissive(pyrMesh, 'window');
   mallG.add(pyrMesh);
 
   makeBox(18, 0.35, 5, M.concreteDark, 0, 5.4, -BLD.D / 2 - 2.5, mallG);
@@ -1798,6 +2625,19 @@ function buildMainEntrance() {
 
   addCollider(-14, 95, 2.2, 2.2);
   addCollider(14, 95, 2.2, 2.2);
+
+  const gateLamps = [[-12, 18], [12, 18], [-12, -10], [12, -10]];
+  gateLamps.forEach(([lx, lz]) => {
+    makeBox(0.25, 4.2, 0.25, std({ color: 0x3a3f47 }), lx, 2.1, lz, g);
+    const bulbMat = std({ color: 0xfff3d4, emissive: 0xffd97d, emissiveIntensity: 0.0 });
+    const bulb = makeBox(0.6, 0.2, 0.4, bulbMat, lx, 4.2, lz, g);
+    registerNightEmissive(bulb, 'lamp');
+    const pl = new THREE.PointLight(0xffeedd, 0, 16, 2);
+    pl.position.set(lx, 4.0, lz);
+    pl.userData.baseIntensity = 18;
+    g.add(pl);
+    registerNightLight(pl);
+  });
 
   const busG = new THREE.Group();
   busG.position.set(-10, 0, 6);
@@ -1837,7 +2677,14 @@ function buildSeasideBoulevard() {
 
   for (let x = -120; x <= 120; x += 30) {
     makeBox(0.2, 4.5, 0.2, matIron, x, 2.25, 2.5, g);
-    makeBox(0.6, 0.12, 0.3, std({ color: 0xffffff, emissive: 0xfff3d4, emissiveIntensity: 1.5 }), x, 4.5, 2.5, g);
+    const bulbMat = std({ color: 0xffffff, emissive: 0xfff3d4, emissiveIntensity: 0.0 });
+    const bulb = makeBox(0.6, 0.12, 0.3, bulbMat, x, 4.5, 2.5, g);
+    registerNightEmissive(bulb, 'lamp');
+    const pl = new THREE.PointLight(0xffeedd, 0, 16, 2);
+    pl.position.set(x, 4.3, 2.5);
+    pl.userData.baseIntensity = 16;
+    g.add(pl);
+    registerNightLight(pl);
     makeBox(2.2, 0.45, 0.7, std({ color: 0x4a3a28 }), x + 6, 0.225, 1.8, g);
   }
 
@@ -2993,8 +3840,12 @@ let currentScheduleEvent = null;
 function updateSchoolScheduleSystem() {
   const evt = getCurrentScheduleEvent(clockMin);
   if (!currentScheduleEvent || currentScheduleEvent.id !== evt.id) {
+    const isInitial = (currentScheduleEvent === null);
     currentScheduleEvent = evt;
     showToast(`🔔 ${hhmm()} — ${evt.label}`);
+    if (!isInitial) {
+      CampusAudioEngine.playWestminsterChime();
+    }
 
     for (let i = 0; i < npcs.length; i++) {
       const npc = npcs[i];
@@ -3035,6 +3886,122 @@ function updateSchoolScheduleSystem() {
       }
     }
     updateDebugRoster();
+  }
+}
+
+// =========================================================================
+// 24-HOUR ASTRONOMICAL DIURNAL LIGHTING & SKY ENGINE
+// =========================================================================
+const diurnalBands = {
+  dawn:    { top: new THREE.Color(0x2d2b55), bot: new THREE.Color(0xf59e0b), fog: new THREE.Color(0xd97706), sunColor: new THREE.Color(0xffddaa), sunInt: 1.5, hemiInt: 0.9, fogNear: 100, fogFar: 460 },
+  day:     { top: new THREE.Color(0x2563eb), bot: new THREE.Color(0xe0f2fe), fog: new THREE.Color(0xd6e8f8), sunColor: new THREE.Color(0xfffaf0), sunInt: 2.5, hemiInt: 1.0, fogNear: 140, fogFar: 540 },
+  sunset:  { top: new THREE.Color(0x581c87), bot: new THREE.Color(0xea580c), fog: new THREE.Color(0xc2410c), sunColor: new THREE.Color(0xff7733), sunInt: 1.8, hemiInt: 0.85, fogNear: 90, fogFar: 420 },
+  night:   { top: new THREE.Color(0x030712), bot: new THREE.Color(0x0f172a), fog: new THREE.Color(0x080d1a), sunColor: new THREE.Color(0x88aaff), sunInt: 0.35, hemiInt: 0.45, fogNear: 50, fogFar: 280 }
+};
+
+const _curTop = new THREE.Color(), _curBot = new THREE.Color(), _curFog = new THREE.Color(), _curSun = new THREE.Color();
+
+function updateDiurnalLighting(dt, elapsed = 0) {
+  // 1. Orbital Sun / Moon trajectory
+  const progress = ((clockMin - 360) / 1440) * Math.PI * 2;
+  const sunDist = 240;
+  const sx = Math.cos(progress) * sunDist * 0.85;
+  const sy = Math.sin(progress) * sunDist;
+  const sz = Math.cos(progress * 0.5) * 65;
+  sun.position.set(sx, sy > 15 ? sy : 15 + (15 - sy) * 0.1, sz);
+
+  // 2. Position visible celestial bodies (Sun & Moon)
+  if (sunMesh && moonMesh) {
+    sunMesh.position.set(sx, Math.max(-20, sy), sz);
+    sunMesh.visible = (sy > -18);
+    sunMat.color.copy(_curSun);
+    sunGlowMat.uniforms.uColor.value.copy(_curSun);
+
+    moonMesh.position.set(-sx, Math.max(-20, -sy), -sz);
+    moonMesh.visible = (-sy > -18);
+  }
+
+  // 3. Twinkling Starfield Opacity
+  if (starMat) {
+    starMat.uniforms.uTime.value = elapsed;
+    let targetStarAlpha = 0;
+    if (clockMin >= 1080 && clockMin < 1200) targetStarAlpha = (clockMin - 1080) / 120; // Sunset fade-in
+    else if (clockMin >= 1200 || clockMin < 300) targetStarAlpha = 1.0;                 // Midnight
+    else if (clockMin >= 300 && clockMin < 390) targetStarAlpha = 1.0 - (clockMin - 300) / 90; // Dawn fade-out
+    starMat.uniforms.uOpacity.value = THREE.MathUtils.lerp(starMat.uniforms.uOpacity.value, targetStarAlpha, Math.min(1, dt * 2));
+  }
+
+  // 4. Determine base astronomical time band
+  let bandA, bandB, blendT = 0;
+  if (clockMin >= 330 && clockMin < 480) { // 05:30 - 08:00 (Dawn -> Day)
+    bandA = diurnalBands.dawn; bandB = diurnalBands.day; blendT = (clockMin - 330) / 150;
+  } else if (clockMin >= 480 && clockMin < 990) { // 08:00 - 16:30 (Day)
+    bandA = diurnalBands.day; bandB = diurnalBands.day; blendT = 0;
+  } else if (clockMin >= 990 && clockMin < 1125) { // 16:30 - 18:45 (Sunset)
+    bandA = diurnalBands.day; bandB = diurnalBands.sunset; blendT = (clockMin - 990) / 135;
+  } else if (clockMin >= 1125 && clockMin < 1260) { // 18:45 - 21:00 (Sunset -> Night)
+    bandA = diurnalBands.sunset; bandB = diurnalBands.night; blendT = (clockMin - 1125) / 135;
+  } else if (clockMin >= 1260 || clockMin < 300) { // 21:00 - 05:00 (Deep Night)
+    bandA = diurnalBands.night; bandB = diurnalBands.night; blendT = 0;
+  } else { // 05:00 - 05:30 (Night -> Dawn)
+    bandA = diurnalBands.night; bandB = diurnalBands.dawn; blendT = (clockMin - 300) / 30;
+  }
+
+  _curTop.copy(bandA.top).lerp(bandB.top, blendT);
+  _curBot.copy(bandA.bot).lerp(bandB.bot, blendT);
+  _curFog.copy(bandA.fog).lerp(bandB.fog, blendT);
+  _curSun.copy(bandA.sunColor).lerp(bandB.sunColor, blendT);
+
+  let targetSunInt = THREE.MathUtils.lerp(bandA.sunInt, bandB.sunInt, blendT);
+  let targetHemiInt = THREE.MathUtils.lerp(bandA.hemiInt, bandB.hemiInt, blendT);
+  let targetNear = THREE.MathUtils.lerp(bandA.fogNear, bandB.fogNear, blendT);
+  let targetFar = THREE.MathUtils.lerp(bandA.fogFar, bandB.fogFar, blendT);
+
+  // Weather overlay modulation
+  if (wCur.rain > 0.1 || wTargetKey === 'storm' || wTargetKey === 'overcast') {
+    const rainFactor = Math.min(1, (wCur.rain || 0.5) * 0.8);
+    _curTop.lerp(new THREE.Color(0x374151), rainFactor);
+    _curBot.lerp(new THREE.Color(0x6b7280), rainFactor);
+    _curFog.lerp(new THREE.Color(0x4b5563), rainFactor);
+    targetSunInt *= (1 - rainFactor * 0.7);
+    targetHemiInt *= (1 - rainFactor * 0.4);
+    targetFar = Math.min(targetFar, 220);
+  }
+
+  // Smooth lerp into active materials
+  const k = Math.min(1, dt * 2.5);
+  skyMat.uniforms.topC.value.lerp(_curTop, k);
+  skyMat.uniforms.botC.value.lerp(_curBot, k);
+  scene.fog.color.lerp(_curFog, k);
+  scene.fog.near = THREE.MathUtils.lerp(scene.fog.near, targetNear, k);
+  scene.fog.far = THREE.MathUtils.lerp(scene.fog.far, targetFar, k);
+  sun.color.lerp(_curSun, k);
+  sun.intensity = THREE.MathUtils.lerp(sun.intensity, targetSunInt + flash * 2.0, k);
+  hemi.intensity = THREE.MathUtils.lerp(hemi.intensity, targetHemiInt + flash * 1.2, k);
+
+  // 5. Night Lamp & Window Emissive Manager (Ignites at 17:30 / clockMin >= 1050 or < 360)
+  const isNight = (clockMin >= 1050 || clockMin < 360);
+  const lampTargetInt = isNight ? 2.4 : 0.0;
+  const winTargetInt = isNight ? 1.6 : 0.0;
+
+  for (let i = 0; i < campusNightLamps.length; i++) {
+    const l = campusNightLamps[i];
+    if (l.material && l.material.emissiveIntensity !== undefined) {
+      l.material.emissiveIntensity = THREE.MathUtils.lerp(l.material.emissiveIntensity, lampTargetInt, k * 2);
+    }
+  }
+  for (let i = 0; i < campusNightWindows.length; i++) {
+    const w = campusNightWindows[i];
+    if (w.material && w.material.emissiveIntensity !== undefined) {
+      // Subtle window room variation
+      const roomFlicker = 0.85 + Math.sin(i * 13.7) * 0.15;
+      w.material.emissiveIntensity = THREE.MathUtils.lerp(w.material.emissiveIntensity, winTargetInt * roomFlicker, k * 2);
+    }
+  }
+  for (let i = 0; i < campusNightPointLights.length; i++) {
+    const pl = campusNightPointLights[i];
+    const base = pl.userData.baseIntensity || 20;
+    pl.intensity = THREE.MathUtils.lerp(pl.intensity, isNight ? base : 0, k * 2);
   }
 }
 
@@ -3099,14 +4066,8 @@ function updateWeather(dt, elapsed) {
   wCur.fog.lerp(_tFog.setHex(wTarget.fog), k);
   for (const p of ['near', 'far', 'sun', 'hemi', 'rain', 'cloud', 'wet']) wCur[p] += (wTarget[p] - wCur[p]) * k;
 
-  skyMat.uniforms.topC.value.copy(wCur.top);
-  skyMat.uniforms.botC.value.copy(wCur.bot);
-  scene.fog.color.copy(wCur.fog); scene.fog.near = wCur.near; scene.fog.far = wCur.far;
-
   if (wTargetKey === 'storm' && Math.random() < dt * 0.35) flash = 1;
   flash = Math.max(0, flash - dt * 3.5);
-  sun.intensity = wCur.sun + flash * 1.8;
-  hemi.intensity = wCur.hemi + flash * 1.2;
 
   cloudMat.opacity = wCur.cloud * 0.85;
   clouds.position.x = ((elapsed * 1.6) % 620) - 310;
@@ -3152,6 +4113,7 @@ function getClosestNPC(maxDist = 4.2) {
 
 addEventListener('keydown', e => {
   keys[e.code] = true;
+  CampusAudioEngine.resumeOnGesture();
   if ((e.code === 'KeyE' || e.key === 'e' || e.key === 'E') && document.activeElement !== dlgInput) {
     if (dialogue.style.display !== 'flex' && storyEl.style.display !== 'flex') {
       const target = nearNPC || getClosestNPC(4.2);
@@ -3163,13 +4125,17 @@ addEventListener('keydown', e => {
   }
   if (e.code === 'KeyV' && document.activeElement !== dlgInput) cycleWeather();
   if (e.code === 'KeyM' && document.activeElement !== dlgInput) toggleTTS();
+  if ((e.code === 'KeyK' || e.code === 'KeyN') && document.activeElement !== dlgInput) toggleAudio();
+  if (e.code === 'KeyP' && document.activeElement !== dlgInput) toggleTimePause();
   if (e.code === 'KeyC' && document.activeElement !== dlgInput) toggleDebugColliders();
+  if (e.code === 'F4') { toggleAtmosphereStudio(); e.preventDefault(); }
   if (e.code === 'F3') { toggleDebugHUD(); e.preventDefault(); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
 
 const cv = renderer.domElement; cv.style.cursor = 'grab';
 cv.addEventListener('mousedown', e => {
+  CampusAudioEngine.resumeOnGesture();
   if (camMode !== 'free' || e.button !== 0) return;
   dragging = true; cv.style.cursor = 'grabbing';
   if (!locked && cv.requestPointerLock) { try { cv.requestPointerLock(); } catch {} }
@@ -3186,6 +4152,7 @@ document.addEventListener('mousemove', e => { if (camMode === 'free' && (locked 
 const _raycaster = new THREE.Raycaster();
 const _mouseVec = new THREE.Vector2();
 cv.addEventListener('click', e => {
+  CampusAudioEngine.resumeOnGesture();
   if (camMode !== 'free' || locked) return;
   const rect = cv.getBoundingClientRect();
   _mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -3283,13 +4250,54 @@ function updateSceneLabel() {
   sceneLabel.textContent = '📍 ' + label;
 }
 
-// ---------- Simulation Clock & Render Loop ----------
-const DAY_REAL_MIN = 20;
-const MIN_PER_SEC = 1440 / (DAY_REAL_MIN * 60);
+// ---------- Simulation Clock & Pacing Engine ----------
+let DAY_REAL_MIN = load('cote3dDayRealMin', 60); // 60 real minutes per full 24h cycle (calibrated for natural RPG exploration)
+let timeSpeedScale = 1.0; // 0 = pause, 0.5x, 1.0x, 2.0x, 5.0x
+let isTimePaused = false;
 let clockMin = 7.75 * 60; // 07:45 Morning Arrival
 let gameDay = load('cote3dDay', 1);
+
+function getMinutesPerSecond() {
+  return 1440 / (DAY_REAL_MIN * 60);
+}
+
+export function setTimeScale(scale) {
+  timeSpeedScale = Math.max(0, scale);
+  isTimePaused = (timeSpeedScale === 0);
+  updateTimeSpeedUI();
+  showToast(isTimePaused ? '⏸️ Simulation Time: Paused' : `⏱️ Simulation Speed: ${timeSpeedScale}x`, 1600);
+}
+window.setTimeScale = setTimeScale;
+
+export function toggleTimePause() {
+  if (isTimePaused || timeSpeedScale === 0) setTimeScale(1.0);
+  else setTimeScale(0.0);
+}
+window.toggleTimePause = toggleTimePause;
+
+const SPEED_OPTIONS = [1, 2, 5, 0];
+export function cycleTimeSpeed() {
+  const curIdx = SPEED_OPTIONS.indexOf(timeSpeedScale);
+  const nextIdx = (curIdx + 1) % SPEED_OPTIONS.length;
+  setTimeScale(SPEED_OPTIONS[nextIdx]);
+}
+window.cycleTimeSpeed = cycleTimeSpeed;
+
+function updateTimeSpeedUI() {
+  const spdMap = { 0: 'spd-btn-0', 0.5: 'spd-btn-05', 1: 'spd-btn-1', 2: 'spd-btn-2', 5: 'spd-btn-5' };
+  Object.keys(spdMap).forEach(k => {
+    const btn = $(spdMap[k]);
+    if (btn) {
+      if (parseFloat(k) === timeSpeedScale) btn.classList.add('active');
+      else btn.classList.remove('active');
+    }
+  });
+}
+
 const clockChip = document.createElement('div');
-clockChip.style.cssText = 'background:rgba(13,16,24,.88);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:13px;backdrop-filter:blur(10px);font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.5);';
+clockChip.style.cssText = 'background:rgba(13,16,24,.88);border:1px solid var(--border);border-radius:10px;padding:8px 14px;font-size:13px;backdrop-filter:blur(10px);pointer-events:auto;cursor:pointer;font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.5);';
+clockChip.title = 'Click to cycle simulation speed (1x -> 2x -> 5x -> Pause) or press P';
+clockChip.onclick = cycleTimeSpeed;
 $('topright').appendChild(clockChip);
 function hhmm() { const h = Math.floor(clockMin / 60) % 24, m = Math.floor(clockMin % 60); return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; }
 
@@ -3304,7 +4312,8 @@ function animate() {
   if (oceanUniforms) oceanUniforms.uTime.value = elapsed;
 
   if (camMode === 'free') {
-    const speed = (keys['ShiftLeft'] || keys['ShiftRight'] ? 10 : 5.5) * dt;
+    const isSprint = (keys['ShiftLeft'] || keys['ShiftRight']);
+    const speed = (isSprint ? 10 : 5.5) * dt;
     const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
     const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
     let mx = 0, mz = 0;
@@ -3313,7 +4322,9 @@ function animate() {
     if (keys['KeyD'] || keys['ArrowRight']) { mx += right.x; mz += right.z; }
     if (keys['KeyA'] || keys['ArrowLeft']) { mx -= right.x; mz -= right.z; }
     const len = Math.hypot(mx, mz);
-    if (len > 0) { mx /= len; mz /= len; tryMove(camera.position.x + mx * speed, camera.position.z + mz * speed); }
+    const isMoving = len > 0;
+    if (isMoving) { mx /= len; mz /= len; tryMove(camera.position.x + mx * speed, camera.position.z + mz * speed); }
+    CampusAudioEngine.stepFootstep(dt, isMoving, isSprint, camera.position.x, camera.position.z, wCur.rain);
     camera.position.y = EYE;
     const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
     camera.lookAt(camera.position.clone().add(dir));
@@ -3330,18 +4341,24 @@ function animate() {
     else { const dir = new THREE.Vector3(-Math.sin(savedYaw) * Math.cos(savedPitch), Math.sin(savedPitch), -Math.cos(savedYaw) * Math.cos(savedPitch)); camLook.lerp(camera.position.clone().add(dir), Math.min(1, dt * 5)); camera.lookAt(camLook); }
   }
 
-  // School Routine & NPC Update
+  // School Routine & NPC Update (Auto-pauses during active NPC dialogue & story narration)
+  const inActiveConvo = (camMode === 'talk' || (dialogue && dialogue.style.display === 'flex') || (storyEl && storyEl.style.display === 'flex'));
+  const effectiveSpeed = inActiveConvo ? 0.0 : (isTimePaused ? 0.0 : timeSpeedScale);
+
   const prevMin = clockMin;
-  clockMin = (clockMin + dt * MIN_PER_SEC) % (24 * 60);
+  clockMin = (clockMin + dt * getMinutesPerSecond() * effectiveSpeed) % (24 * 60);
   if (clockMin < prevMin) { gameDay++; save('cote3dDay', gameDay); }
   updateSchoolScheduleSystem();
 
   for (const n of npcs) updateNPCBehavior(n, dt, elapsed);
+  updateDiurnalLighting(dt, elapsed);
   updateWeather(dt, elapsed);
+  CampusAudioEngine.updateAmbiance(dt, camera.position.x, camera.position.z, wCur.rain, flash, clockMin);
   updateDebugPathVisualizer();
 
   const evt = getCurrentScheduleEvent(clockMin);
-  clockChip.textContent = `🕗 ${hhmm()} · Day ${gameDay} · ${evt.label}`;
+  const statusPrefix = inActiveConvo ? '💬 ' : (isTimePaused ? '⏸️ ' : (timeSpeedScale !== 1 ? `⏩ ${timeSpeedScale}x ` : ''));
+  clockChip.textContent = `${statusPrefix}🕗 ${hhmm()} · Day ${gameDay} · ${evt.label}`;
 
   updateProximity();
   updateSceneLabel();
@@ -3530,6 +4547,7 @@ window.skipToTime = function(h) {
     JavaSimulationBridge.setServerTime(h);
   }
   updateSchoolScheduleSystem();
+  CampusAudioEngine.playWestminsterChime();
   showToast(`⏩ Time skipped to ${hhmm()}`, 3000);
 };
 
@@ -3742,6 +4760,7 @@ function renderChoices(list) {
 
 function openDialogue(npc) {
   if (!npc) return;
+  CampusAudioEngine.playDialogueChirp();
   activeNPC = npc;
 
   // Cache state and pause movement
@@ -4040,6 +5059,7 @@ async function narrateScene(force) {
   storyThinking.style.display = 'none';
 }
 function enterScene(i) {
+  CampusAudioEngine.playObjectiveJingle();
   story.i = Math.max(0, Math.min(SCENES.length - 1, i)); story.active = true; save('cote3dStory', story);
   updateObjective(); narrateScene(false);
 }
@@ -4055,6 +5075,8 @@ $('next-scene-btn').onclick = () => { storyEl.style.display = 'flex'; nextScene(
 
 // ---------- Start / Reset ----------
 function begin(mode) {
+  CampusAudioEngine.resumeOnGesture();
+  CampusAudioEngine.playWestminsterChime();
   const k = keyInput.value.trim();
   if (mode !== 'explore') { if (k) { apiKey = k; localStorage.setItem('naraApiKey', apiKey); } canTalk = !!apiKey; }
   else canTalk = false;
@@ -4072,6 +5094,7 @@ $('reset-btn').onclick = () => {
   location.reload();
 };
 
+initAtmosphereStudio();
 updateObjective();
 testCampusNavigation();
 updateSchoolScheduleSystem();
