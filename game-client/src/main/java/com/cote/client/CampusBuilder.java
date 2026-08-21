@@ -273,6 +273,8 @@ public class CampusBuilder {
         mat.setBoolean("UseMaterialColors", true);
         mat.setColor("Ambient", color);
         mat.setColor("Diffuse", color);
+        mat.setColor("Specular", new ColorRGBA(0.10f, 0.10f, 0.10f, 1f));
+        mat.setFloat("Shininess", 6f);
         geom.setMaterial(mat);
         
         geom.setLocalTranslation(x, y, z);
@@ -311,6 +313,8 @@ public class CampusBuilder {
         mat.setBoolean("UseMaterialColors", true);
         mat.setColor("Ambient", color);
         mat.setColor("Diffuse", color);
+        mat.setColor("Specular", new ColorRGBA(0.10f, 0.10f, 0.10f, 1f));
+        mat.setFloat("Shininess", 6f);
         geom.setMaterial(mat);
         geom.setLocalTranslation(x, y, z);
         geom.setShadowMode(RenderQueue.ShadowMode.CastAndReceive);

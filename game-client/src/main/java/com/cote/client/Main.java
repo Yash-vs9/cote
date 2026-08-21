@@ -58,7 +58,13 @@ public class Main extends SimpleApplication {
         ambient = new AmbientLight();
         ambient.setColor(ColorRGBA.White.mult(0.6f));
         rootNode.addLight(ambient);
-        
+
+        // Cool sky-fill light from the opposite side lifts the shadowed faces (less flat/black).
+        DirectionalLight fill = new DirectionalLight();
+        fill.setDirection(new Vector3f(0.6f, -0.35f, 0.7f).normalizeLocal());
+        fill.setColor(new ColorRGBA(0.42f, 0.48f, 0.58f, 1.0f));
+        rootNode.addLight(fill);
+
         viewPort.setBackgroundColor(new ColorRGBA(0.5f, 0.7f, 0.9f, 1.0f));
         
         initCrossHairs();
@@ -68,16 +74,25 @@ public class Main extends SimpleApplication {
         
         com.jme3.post.FilterPostProcessor fpp = new com.jme3.post.FilterPostProcessor(assetManager);
         
-        DirectionalLightShadowRenderer dlsr = new DirectionalLightShadowRenderer(assetManager, 2048, 2);
+        DirectionalLightShadowRenderer dlsr = new DirectionalLightShadowRenderer(assetManager, 2048, 3);
         dlsr.setLight(sun);
+        dlsr.setEdgeFilteringMode(com.jme3.shadow.EdgeFilteringMode.PCFPOISSON);
+        dlsr.setShadowIntensity(0.45f); // softer, not pitch-black shadows
         viewPort.addProcessor(dlsr);
-        
+
+        // Ambient occlusion adds contact shadows/depth to the flat boxy geometry.
+        com.jme3.post.ssao.SSAOFilter ssao = new com.jme3.post.ssao.SSAOFilter(4.0f, 1.3f, 0.28f, 0.10f);
+        fpp.addFilter(ssao);
+
         fog = new com.jme3.post.filters.FogFilter();
         fog.setFogColor(new ColorRGBA(0.62f, 0.76f, 0.88f, 1.0f));
         fog.setFogDistance(400);
         fog.setFogDensity(0.015f);
         fpp.addFilter(fog);
-        
+
+        // Anti-aliasing for crisp edges.
+        fpp.addFilter(new com.jme3.post.filters.FXAAFilter());
+
         viewPort.addProcessor(fpp);
 
         // 4. Setup Sky background color
@@ -114,9 +129,10 @@ public class Main extends SimpleApplication {
         inputManager.addMapping("StrafeLeft", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_A));
         inputManager.addMapping("StrafeRight", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_D));
         inputManager.addMapping("Interact", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_E));
-        
+        inputManager.addMapping("Sprint", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_LSHIFT));
+
         com.jme3.input.controls.ActionListener actionListener = this::onAction;
-        inputManager.addListener(actionListener, "WalkForward", "WalkBackward", "StrafeLeft", "StrafeRight", "Interact");
+        inputManager.addListener(actionListener, "WalkForward", "WalkBackward", "StrafeLeft", "StrafeRight", "Interact", "Sprint");
         
         // 7. Initialize Simulation Engine (Phase 3)
         engine = new com.cote.simulation.SimulationEngine();
@@ -129,7 +145,7 @@ public class Main extends SimpleApplication {
         cam.setLocation(new Vector3f(-34f, 1.4f, 40f));
     }
 
-    private boolean forward, backward, left, right;
+    private boolean forward, backward, left, right, sprint;
     private com.cote.simulation.SimulationEngine engine;
     private java.util.Map<String, Rig> npcRigs = new java.util.HashMap<>();
     private float time = 0;
@@ -138,35 +154,54 @@ public class Main extends SimpleApplication {
     private com.cote.simulation.NPC nearestNpc = null;
     
     private void onAction(String name, boolean isPressed, float tpf) {
+        // While the elevator panel is open, E closes it; all movement is locked.
+        if (hud != null && hud.isElevatorActive()) {
+            forward = false; backward = false; left = false; right = false;
+            if (name.equals("Interact") && isPressed) hud.closeElevator();
+            return;
+        }
         if (hud != null && hud.isDialogueActive()) {
             forward = false; backward = false; left = false; right = false;
             return;
         }
-        
+
         if (name.equals("WalkForward")) forward = isPressed;
         if (name.equals("WalkBackward")) backward = isPressed;
         if (name.equals("StrafeLeft")) left = isPressed;
         if (name.equals("StrafeRight")) right = isPressed;
-        
+        if (name.equals("Sprint")) sprint = isPressed;
+
         if (name.equals("Interact") && isPressed) {
             if (nearestNpc != null) {
                 hud.openDialogue(nearestNpc);
-            } else {
-                com.jme3.collision.CollisionResults results = new com.jme3.collision.CollisionResults();
-                com.jme3.math.Ray ray = new com.jme3.math.Ray(cam.getLocation(), cam.getDirection());
-                rootNode.collideWith(ray, results);
-                if (results.size() > 0) {
-                    com.jme3.collision.CollisionResult closest = results.getClosestCollision();
-                    if (closest.getDistance() < 4.0f) {
-                        com.jme3.scene.Spatial s = closest.getGeometry();
-                        while (s != null) {
-                            String sn = s.getName();
-                            if (sn != null) {
-                                for (InteractiveDoor d : doors) if (d.label.equals(sn)) { d.interact(); return; }
-                                for (InteractiveElevator e : elevators) if (e.label.equals(sn)) { e.interact(); return; }
-                            }
-                            s = s.getParent();
+                return;
+            }
+            // Elevator: open by PROXIMITY. Raycasting a floor-level platform never hits
+            // (the ray points forward, the platform is at your feet), so use distance instead.
+            Vector3f pp = cam.getLocation();
+            for (InteractiveElevator e : elevators) {
+                Vector3f ep = e.platform.getWorldTranslation();
+                if (Math.abs(pp.x - ep.x) < 3.0f && Math.abs(pp.z - ep.z) < 3.0f
+                        && pp.y < ep.y + 4.0f && pp.y > ep.y - 1.0f) {
+                    hud.openElevator(e);
+                    return;
+                }
+            }
+            // Doors still use a forward raycast (they're vertical panels).
+            com.jme3.collision.CollisionResults results = new com.jme3.collision.CollisionResults();
+            com.jme3.math.Ray ray = new com.jme3.math.Ray(cam.getLocation(), cam.getDirection());
+            rootNode.collideWith(ray, results);
+            if (results.size() > 0) {
+                com.jme3.collision.CollisionResult closest = results.getClosestCollision();
+                if (closest.getDistance() < 4.0f) {
+                    com.jme3.scene.Spatial s = closest.getGeometry();
+                    while (s != null) {
+                        String sn = s.getName();
+                        if (sn != null) {
+                            for (InteractiveDoor d : doors) if (d.label.equals(sn)) { d.interact(); return; }
+                            for (InteractiveElevator e : elevators) if (e.label.equals(sn)) { hud.openElevator(e); return; }
                         }
+                        s = s.getParent();
                     }
                 }
             }
@@ -191,65 +226,59 @@ public class Main extends SimpleApplication {
     public void simpleUpdate(float tpf) {
         if (npcManager != null) npcManager.update(tpf);
 
-        // Handle WASD walking
-        if (hud == null || !hud.isDialogueActive()) {
+        // Movement is locked during dialogue or while the elevator panel is open.
+        boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()));
+        if (!uiLock) {
+            Vector3f pos = cam.getLocation();
+            final float radius = 0.4f, playerHeight = 1.8f, eyeHeight = 1.4f, stepHeight = 0.6f;
+            float footY = pos.y - eyeHeight;
+
+            // Are we standing in an elevator car? If so, let the elevator control our Y (no gravity).
+            boolean onElevatorCar = false;
+            for (InteractiveElevator e : elevators) {
+                Vector3f ep = e.platform.getWorldTranslation();
+                if (Math.abs(pos.x - ep.x) < 2.4f && Math.abs(pos.z - ep.z) < 2.4f
+                        && pos.y > ep.y + 0.4f && pos.y < ep.y + 3.6f) { onElevatorCar = true; break; }
+            }
+
+            // --- Vertical: floor snap + gravity EVERY frame (so you settle on floors/stairs) ---
+            if (!onElevatorCar) {
+                float newFootY = -1000f;
+                for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
+                    if (pos.x + radius > aabb.minX && pos.x - radius < aabb.maxX &&
+                        pos.z + radius > aabb.minZ && pos.z - radius < aabb.maxZ) {
+                        if (aabb.maxY <= footY + stepHeight && aabb.maxY > newFootY) newFootY = aabb.maxY;
+                    }
+                }
+                if (newFootY != -1000f) footY += (newFootY - footY) * Math.min(1f, 15f * tpf); // snap to floor/step
+                else { footY -= 8f * tpf; if (footY < 0.05f) footY = 0.05f; }                  // gravity
+                pos.y = footY + eyeHeight;
+                cam.setLocation(pos);
+            }
+
+            // --- Horizontal: WASD with wall-slide (only when a key is held) ---
             Vector3f camDir = cam.getDirection().clone().setY(0).normalizeLocal();
             Vector3f camLeft = cam.getLeft().clone().setY(0).normalizeLocal();
-            
             Vector3f walkDirection = new Vector3f(0, 0, 0);
             if (forward) walkDirection.addLocal(camDir);
             if (backward) walkDirection.subtractLocal(camDir);
             if (left) walkDirection.addLocal(camLeft);
             if (right) walkDirection.subtractLocal(camLeft);
-            
+
             if (walkDirection.lengthSquared() > 0) {
-                walkDirection.normalizeLocal().multLocal(6.0f * tpf); // 6m/s sprint
-                
-                
-                Vector3f pos = cam.getLocation();
-                float radius = 0.4f;
-                float playerHeight = 1.8f;
-                float eyeHeight = 1.4f; // relative to feet
-                float footY = pos.y - eyeHeight;
-                
-                // Determine the floor height we are standing on (or stepping onto)
-                float stepHeight = 0.6f; // Max step height
-                float newFootY = -1000f;
-                
-                for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
-                    if (pos.x + radius > aabb.minX && pos.x - radius < aabb.maxX &&
-                        pos.z + radius > aabb.minZ && pos.z - radius < aabb.maxZ) {
-                        if (aabb.maxY <= footY + stepHeight && aabb.maxY > newFootY) {
-                            newFootY = aabb.maxY;
-                        }
-                    }
-                }
-                
-                // Apply gravity / step up
-                if (newFootY != -1000f) {
-                    footY = footY + (newFootY - footY) * 15f * tpf; // smooth snap to floor
-                } else {
-                    footY -= 5f * tpf; // simple gravity if falling
-                    // Don't fall below ground
-                    if (footY < 0.05f) footY = 0.05f;
-                }
-                
-                pos.y = footY + eyeHeight;
-                
-                // X-axis collision (wall slide)
+                float speed = sprint ? 12.0f : 6.0f; // hold Left-Shift to sprint
+                walkDirection.normalizeLocal().multLocal(speed * tpf);
+                float fY = pos.y - eyeHeight;
                 float nextX = pos.x + walkDirection.x;
                 boolean collidesX = false;
-                for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
-                    if (aabb.intersects(nextX, footY + stepHeight, pos.z, radius, playerHeight - stepHeight)) { collidesX = true; break; }
-                }
+                for (CampusBuilder.AABB aabb : CampusBuilder.colliders)
+                    if (aabb.intersects(nextX, fY + stepHeight, pos.z, radius, playerHeight - stepHeight)) { collidesX = true; break; }
                 if (!collidesX) pos.x = nextX;
-                
-                // Z-axis collision (wall slide)
+
                 float nextZ = pos.z + walkDirection.z;
                 boolean collidesZ = false;
-                for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
-                    if (aabb.intersects(pos.x, footY + stepHeight, nextZ, radius, playerHeight - stepHeight)) { collidesZ = true; break; }
-                }
+                for (CampusBuilder.AABB aabb : CampusBuilder.colliders)
+                    if (aabb.intersects(pos.x, fY + stepHeight, nextZ, radius, playerHeight - stepHeight)) { collidesZ = true; break; }
                 if (!collidesZ) pos.z = nextZ;
 
                 cam.setLocation(pos);
@@ -349,8 +378,21 @@ public class Main extends SimpleApplication {
         for (InteractiveDoor d : doors) d.update(tpf);
         for (InteractiveElevator e : elevators) e.update(tpf, this);
         
-        if (nearestNpc != null && hud != null && !hud.isDialogueActive()) {
-            hud.showPrompt(nearestNpc.getName());
+        if (hud != null && !hud.isDialogueActive() && !hud.isElevatorActive()) {
+            if (nearestNpc != null) {
+                hud.showPrompt(nearestNpc.getName());
+            } else {
+                // Prompt when standing near an elevator car.
+                InteractiveElevator nearElev = null;
+                Vector3f pp = cam.getLocation();
+                for (InteractiveElevator e : elevators) {
+                    Vector3f ep = e.platform.getWorldTranslation();
+                    if (Math.abs(pp.x - ep.x) < 3.0f && Math.abs(pp.z - ep.z) < 3.0f
+                            && pp.y < ep.y + 4.0f && pp.y > ep.y - 1.0f) { nearElev = e; break; }
+                }
+                if (nearElev != null) hud.showActionPrompt("Press E to use the Elevator");
+                else hud.hidePrompt();
+            }
         } else if (hud != null) {
             hud.hidePrompt();
         }

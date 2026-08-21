@@ -28,6 +28,11 @@ public class HudUI extends BaseAppState {
     private boolean isDialogueActive = false;
     private NPC currentNpc = null;
     private StringBuilder currentInput = new StringBuilder();
+
+    // Elevator floor-button panel
+    private boolean isElevatorActive = false;
+    private InteractiveElevator currentElevator = null;
+    private BitmapText elevatorLabel;
     
     private RawInputListener textInputListener = new RawInputListener() {
         public void beginInput() {}
@@ -37,8 +42,21 @@ public class HudUI extends BaseAppState {
         public void onMouseMotionEvent(MouseMotionEvent evt) {}
         public void onMouseButtonEvent(MouseButtonEvent evt) {}
         public void onKeyEvent(KeyInputEvent evt) {
+            // Elevator floor-button panel takes keys first (1-9 select a floor, Esc/E closes).
+            if (isElevatorActive) {
+                if (!evt.isPressed()) return;
+                int code = evt.getKeyCode();
+                if (code == KeyInput.KEY_ESCAPE) { closeElevator(); return; }
+                int floor = -1;
+                if (code >= KeyInput.KEY_1 && code <= KeyInput.KEY_9) floor = code - KeyInput.KEY_1;
+                if (floor >= 0 && currentElevator != null && floor < currentElevator.getFloorCount()) {
+                    currentElevator.goToFloor(floor);
+                    refreshElevatorPanel();
+                }
+                return;
+            }
             if (!isDialogueActive || !evt.isPressed()) return;
-            
+
             if (evt.getKeyCode() == KeyInput.KEY_RETURN) {
                 submitDialogue();
             } else if (evt.getKeyCode() == KeyInput.KEY_BACK) {
@@ -75,9 +93,46 @@ public class HudUI extends BaseAppState {
         playerInputLabel = new BitmapText(font);
         playerInputLabel.setSize(font.getCharSet().getRenderedSize() * 1.5f);
         playerInputLabel.setColor(ColorRGBA.Yellow);
-        
+
+        elevatorLabel = new BitmapText(font);
+        elevatorLabel.setSize(font.getCharSet().getRenderedSize() * 1.4f);
+        elevatorLabel.setColor(ColorRGBA.White);
+
         app.getInputManager().addRawInputListener(textInputListener);
     }
+
+    // ---------- Elevator button panel ----------
+    public void openElevator(InteractiveElevator elev) {
+        if (isElevatorActive || isDialogueActive || elev == null) return;
+        isElevatorActive = true;
+        currentElevator = elev;
+        hidePrompt();
+        refreshElevatorPanel();
+        if (elevatorLabel.getParent() == null) app.getGuiNode().attachChild(elevatorLabel);
+    }
+
+    public void closeElevator() {
+        isElevatorActive = false;
+        currentElevator = null;
+        elevatorLabel.removeFromParent();
+    }
+
+    private void refreshElevatorPanel() {
+        if (currentElevator == null) return;
+        StringBuilder sb = new StringBuilder("ELEVATOR  (press a number, E to close)\n");
+        int n = currentElevator.getFloorCount();
+        for (int i = 0; i < n; i++) {
+            boolean here = (i == currentElevator.currentFloor);
+            sb.append(here ? " > " : "   ").append("[").append(i + 1).append("] Floor ").append(i + 1)
+              .append(here ? "  (current)" : "").append("\n");
+        }
+        elevatorLabel.setText(sb.toString());
+        float w = app.getCamera().getWidth();
+        float h = app.getCamera().getHeight();
+        elevatorLabel.setLocalTranslation(w * 0.5f - 160, h * 0.65f, 0);
+    }
+
+    public boolean isElevatorActive() { return isElevatorActive; }
 
     public void showPrompt(String name) {
         if (!isDialogueActive) {
@@ -92,6 +147,17 @@ public class HudUI extends BaseAppState {
         }
     }
     
+    /** Generic centered prompt (e.g. for elevators/doors), not just NPCs. */
+    public void showActionPrompt(String text) {
+        if (isDialogueActive || isElevatorActive) return;
+        promptLabel.setText(text);
+        promptLabel.setLocalTranslation(
+            app.getCamera().getWidth() / 2f - promptLabel.getLineWidth() / 2f,
+            app.getCamera().getHeight() / 2f, 0
+        );
+        if (promptLabel.getParent() == null) app.getGuiNode().attachChild(promptLabel);
+    }
+
     public void hidePrompt() {
         if (promptLabel.getParent() != null) {
             promptLabel.removeFromParent();
