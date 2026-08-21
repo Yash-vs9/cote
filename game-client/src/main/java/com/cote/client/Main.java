@@ -23,27 +23,49 @@ public class Main extends SimpleApplication {
         app.setShowSettings(false); // Skip settings dialog
         app.start();
     }
-
+    
     private DirectionalLight sun;
     private AmbientLight ambient;
     private com.jme3.post.filters.FogFilter fog;
 
+    private float interactionCooldown = 0f;
+    private com.jme3.font.BitmapText interactionText;
+    private NpcManager npcManager;
+
+    public static final java.util.List<InteractiveDoor> doors = new java.util.ArrayList<>();
+    public static final java.util.List<InteractiveElevator> elevators = new java.util.ArrayList<>();
     @Override
     public void simpleInitApp() {
-        // 1. Basic Setup
+        // Setup camera and movement speed
         flyCam.setMoveSpeed(15f);
+        cam.setLocation(new Vector3f(0, 1.5f, 5));
 
-        // 2. Setup Lighting (Directional Sun + Ambient Fill)
+        // Create the campus environment
+        CampusBuilder builder = new CampusBuilder(assetManager);
+        builder.buildAll();
+        rootNode.attachChild(builder.rootNode);
+        
+        // Initialize NPCs
+        npcManager = new NpcManager();
+        npcManager.init(assetManager, rootNode);
+
+        // Setup lighting
         sun = new DirectionalLight();
-        sun.setDirection(new Vector3f(-1, -2, -1.5f).normalizeLocal());
-        sun.setColor(new ColorRGBA(1.0f, 0.96f, 0.9f, 1.0f)); // Warm sunlight
+        sun.setDirection(new Vector3f(-0.5f, -1f, -0.5f).normalizeLocal());
+        sun.setColor(ColorRGBA.White.mult(1.3f));
         rootNode.addLight(sun);
 
         ambient = new AmbientLight();
-        ambient.setColor(new ColorRGBA(0.4f, 0.45f, 0.5f, 1.0f));
+        ambient.setColor(ColorRGBA.White.mult(0.6f));
         rootNode.addLight(ambient);
+        
+        viewPort.setBackgroundColor(new ColorRGBA(0.5f, 0.7f, 0.9f, 1.0f));
+        initKeys();
+        initCrossHairs();
 
-        // 3. Setup Shadows & Fog
+        
+        
+        
         com.jme3.post.FilterPostProcessor fpp = new com.jme3.post.FilterPostProcessor(assetManager);
         
         DirectionalLightShadowRenderer dlsr = new DirectionalLightShadowRenderer(assetManager, 2048, 2);
@@ -52,8 +74,8 @@ public class Main extends SimpleApplication {
         
         fog = new com.jme3.post.filters.FogFilter();
         fog.setFogColor(new ColorRGBA(0.62f, 0.76f, 0.88f, 1.0f));
-        fog.setFogDistance(80);
-        fog.setFogDensity(1.5f);
+        fog.setFogDistance(400);
+        fog.setFogDensity(0.015f);
         fpp.addFilter(fog);
         
         viewPort.addProcessor(fpp);
@@ -75,10 +97,6 @@ public class Main extends SimpleApplication {
         ground.setShadowMode(com.jme3.renderer.queue.RenderQueue.ShadowMode.Receive);
         rootNode.attachChild(ground);
         
-        // 5. Build Campus World (Phase 2)
-        CampusBuilder builder = new CampusBuilder(assetManager);
-        builder.buildAll();
-        rootNode.attachChild(builder.rootNode);
         
         // Remove test rig from Phase 1 for now (or move it)
         // rig = new Rig(assetManager, "m");
@@ -130,13 +148,82 @@ public class Main extends SimpleApplication {
         if (name.equals("StrafeLeft")) left = isPressed;
         if (name.equals("StrafeRight")) right = isPressed;
         
-        if (name.equals("Interact") && isPressed && nearestNpc != null) {
-            hud.openDialogue(nearestNpc);
+        if (name.equals("Interact") && isPressed) {
+            if (nearestNpc != null) {
+                hud.openDialogue(nearestNpc);
+            } else {
+                com.jme3.collision.CollisionResults results = new com.jme3.collision.CollisionResults();
+                com.jme3.math.Ray ray = new com.jme3.math.Ray(cam.getLocation(), cam.getDirection());
+                rootNode.collideWith(ray, results);
+                if (results.size() > 0) {
+                    com.jme3.collision.CollisionResult closest = results.getClosestCollision();
+                    if (closest.getDistance() < 4.0f) {
+                        com.jme3.scene.Spatial s = closest.getGeometry();
+                        while (s != null) {
+                            String sn = s.getName();
+                            if (sn != null) {
+                                for (InteractiveDoor d : doors) if (d.label.equals(sn)) { d.interact(); return; }
+                                for (InteractiveElevator e : elevators) if (e.label.equals(sn)) { e.interact(); return; }
+                            }
+                            s = s.getParent();
+                        }
+                    }
+                }
+            }
         }
     }
 
-    @Override
+    
+    
+
+    private void initKeys() {
+        inputManager.addMapping("Left",  new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_A));
+        inputManager.addMapping("Right", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_D));
+        inputManager.addMapping("Up",    new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_W));
+        inputManager.addMapping("Down",  new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_S));
+        inputManager.addMapping("Interact", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_E));
+        
+        inputManager.addListener(actionListener, "Left", "Right", "Up", "Down", "Interact");
+    }
+
+    private com.jme3.input.controls.ActionListener actionListener = new com.jme3.input.controls.ActionListener() {
+        public void onAction(String name, boolean isPressed, float tpf) {
+            if (name.equals("Left")) { left = isPressed; }
+            else if (name.equals("Right")) { right = isPressed; }
+            else if (name.equals("Up")) { forward = isPressed; }
+            else if (name.equals("Down")) { backward = isPressed; }
+            else if (name.equals("Interact") && !isPressed) {
+                // Raycast
+                com.jme3.collision.CollisionResults results = new com.jme3.collision.CollisionResults();
+                com.jme3.math.Ray ray = new com.jme3.math.Ray(cam.getLocation(), cam.getDirection());
+                rootNode.collideWith(ray, results);
+                if (results.size() > 0) {
+                    com.jme3.scene.Geometry closest = results.getClosestCollision().getGeometry();
+                    if (closest.getName().startsWith("Door_")) {
+                        for (InteractiveDoor d : doors) if (d.label.equals(closest.getName())) d.interact();
+                    } else if (closest.getName().startsWith("ElevatorButton") || closest.getName().contains("ElevatorButton")) {
+                        for (InteractiveElevator e : elevators) if (e.label.equals(closest.getName())) e.interact();
+                    }
+                }
+            }
+        }
+    };
+    
+    private void initCrossHairs() {
+        guiNode.detachAllChildren();
+        guiFont = assetManager.loadFont("Interface/Fonts/Default.fnt");
+        com.jme3.font.BitmapText ch = new com.jme3.font.BitmapText(guiFont, false);
+        ch.setSize(guiFont.getCharSet().getRenderedSize() * 2);
+        ch.setText("+");
+        ch.setLocalTranslation(
+                settings.getWidth() / 2f - ch.getLineWidth() / 2f,
+                settings.getHeight() / 2f + ch.getLineHeight() / 2f, 0);
+        guiNode.attachChild(ch);
+    }
+
     public void simpleUpdate(float tpf) {
+        if (npcManager != null) npcManager.update(tpf);
+
         // Handle WASD walking
         if (hud == null || !hud.isDialogueActive()) {
             Vector3f camDir = cam.getDirection().clone().setY(0).normalizeLocal();
@@ -158,15 +245,17 @@ public class Main extends SimpleApplication {
                 float nextX = pos.x + walkDirection.x;
                 boolean collidesX = false;
                 for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
-                    if (aabb.intersects(nextX, pos.z, radius)) { collidesX = true; break; }
+                    if (aabb.intersects(nextX, pos.y, pos.z, radius, 2.0f)) { collidesX = true; break; }
                 }
-                if (!collidesX) pos.x = nextX;
+                if (!collidesX) {
+                    pos.x = nextX;
+                }
                 
                 // Z-axis collision (wall slide)
                 float nextZ = pos.z + walkDirection.z;
                 boolean collidesZ = false;
                 for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
-                    if (aabb.intersects(pos.x, nextZ, radius)) { collidesZ = true; break; }
+                    if (aabb.intersects(pos.x, pos.y, nextZ, radius, 2.0f)) { collidesZ = true; break; }
                 }
                 if (!collidesZ) pos.z = nextZ;
                 
@@ -263,6 +352,9 @@ public class Main extends SimpleApplication {
         fog.setFogColor(curSky);
         sun.setColor(curSun);
         ambient.setColor(curAmb);
+
+        for (InteractiveDoor d : doors) d.update(tpf);
+        for (InteractiveElevator e : elevators) e.update(tpf, this);
         
         if (nearestNpc != null && hud != null && !hud.isDialogueActive()) {
             hud.showPrompt(nearestNpc.getName());
