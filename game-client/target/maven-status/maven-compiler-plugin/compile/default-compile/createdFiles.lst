@@ -4,7 +4,6 @@ com/cote/client/InteractiveElevator.class
 com/cote/client/InteractiveDoor.class
 com/cote/client/HudUI$1.class
 com/cote/client/HudUI.class
-com/cote/client/Main$1.class
 com/cote/client/AcademicBuildingBuilder.class
 com/cote/client/CharacterRig.class
 com/cote/client/DormitoryBuilder.class

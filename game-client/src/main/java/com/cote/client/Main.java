@@ -60,7 +60,7 @@ public class Main extends SimpleApplication {
         rootNode.addLight(ambient);
         
         viewPort.setBackgroundColor(new ColorRGBA(0.5f, 0.7f, 0.9f, 1.0f));
-        initKeys();
+        
         initCrossHairs();
 
         
@@ -176,39 +176,6 @@ public class Main extends SimpleApplication {
     
     
 
-    private void initKeys() {
-        inputManager.addMapping("Left",  new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_A));
-        inputManager.addMapping("Right", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_D));
-        inputManager.addMapping("Up",    new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_W));
-        inputManager.addMapping("Down",  new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_S));
-        inputManager.addMapping("Interact", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_E));
-        
-        inputManager.addListener(actionListener, "Left", "Right", "Up", "Down", "Interact");
-    }
-
-    private com.jme3.input.controls.ActionListener actionListener = new com.jme3.input.controls.ActionListener() {
-        public void onAction(String name, boolean isPressed, float tpf) {
-            if (name.equals("Left")) { left = isPressed; }
-            else if (name.equals("Right")) { right = isPressed; }
-            else if (name.equals("Up")) { forward = isPressed; }
-            else if (name.equals("Down")) { backward = isPressed; }
-            else if (name.equals("Interact") && !isPressed) {
-                // Raycast
-                com.jme3.collision.CollisionResults results = new com.jme3.collision.CollisionResults();
-                com.jme3.math.Ray ray = new com.jme3.math.Ray(cam.getLocation(), cam.getDirection());
-                rootNode.collideWith(ray, results);
-                if (results.size() > 0) {
-                    com.jme3.scene.Geometry closest = results.getClosestCollision().getGeometry();
-                    if (closest.getName().startsWith("Door_")) {
-                        for (InteractiveDoor d : doors) if (d.label.equals(closest.getName())) d.interact();
-                    } else if (closest.getName().startsWith("ElevatorButton") || closest.getName().contains("ElevatorButton")) {
-                        for (InteractiveElevator e : elevators) if (e.label.equals(closest.getName())) e.interact();
-                    }
-                }
-            }
-        }
-    };
-    
     private void initCrossHairs() {
         guiNode.detachAllChildren();
         guiFont = assetManager.loadFont("Interface/Fonts/Default.fnt");
@@ -238,27 +205,53 @@ public class Main extends SimpleApplication {
             if (walkDirection.lengthSquared() > 0) {
                 walkDirection.normalizeLocal().multLocal(6.0f * tpf); // 6m/s sprint
                 
+                
                 Vector3f pos = cam.getLocation();
                 float radius = 0.4f;
+                float playerHeight = 1.8f;
+                float eyeHeight = 1.4f; // relative to feet
+                float footY = pos.y - eyeHeight;
+                
+                // Determine the floor height we are standing on (or stepping onto)
+                float stepHeight = 0.6f; // Max step height
+                float newFootY = -1000f;
+                
+                for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
+                    if (pos.x + radius > aabb.minX && pos.x - radius < aabb.maxX &&
+                        pos.z + radius > aabb.minZ && pos.z - radius < aabb.maxZ) {
+                        if (aabb.maxY <= footY + stepHeight && aabb.maxY > newFootY) {
+                            newFootY = aabb.maxY;
+                        }
+                    }
+                }
+                
+                // Apply gravity / step up
+                if (newFootY != -1000f) {
+                    footY = footY + (newFootY - footY) * 15f * tpf; // smooth snap to floor
+                } else {
+                    footY -= 5f * tpf; // simple gravity if falling
+                    // Don't fall below ground
+                    if (footY < 0.05f) footY = 0.05f;
+                }
+                
+                pos.y = footY + eyeHeight;
                 
                 // X-axis collision (wall slide)
                 float nextX = pos.x + walkDirection.x;
                 boolean collidesX = false;
                 for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
-                    if (aabb.intersects(nextX, pos.y, pos.z, radius, 2.0f)) { collidesX = true; break; }
+                    if (aabb.intersects(nextX, footY + stepHeight, pos.z, radius, playerHeight - stepHeight)) { collidesX = true; break; }
                 }
-                if (!collidesX) {
-                    pos.x = nextX;
-                }
+                if (!collidesX) pos.x = nextX;
                 
                 // Z-axis collision (wall slide)
                 float nextZ = pos.z + walkDirection.z;
                 boolean collidesZ = false;
                 for (CampusBuilder.AABB aabb : CampusBuilder.colliders) {
-                    if (aabb.intersects(pos.x, pos.y, nextZ, radius, 2.0f)) { collidesZ = true; break; }
+                    if (aabb.intersects(pos.x, footY + stepHeight, nextZ, radius, playerHeight - stepHeight)) { collidesZ = true; break; }
                 }
                 if (!collidesZ) pos.z = nextZ;
-                
+
                 cam.setLocation(pos);
             }
         }
