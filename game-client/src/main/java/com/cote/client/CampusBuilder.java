@@ -73,14 +73,14 @@ public class CampusBuilder {
         // Glass shell
         makeBox(40, 6.0f, 0.2f, matWater, cX, 3.4f, cZ - 12, g, true);
         makeBox(40, 6.0f, 0.2f, matWater, cX, 3.4f, cZ + 12, g, true);
-        makeBox(0.2f, 6.0f, 24, matWater, cX + 20, 3.4f, cZ, g, true);
+        makeWallWithDoor(0.2f, 6.0f, 24, matWater, cX + 20, 3.4f, cZ, g, cZ, 4.0f, 3.0f, true);
         makeBox(0.2f, 6.0f, 24, matWater, cX - 20, 3.4f, cZ, g, true);
         
         // Door
         Node doorPivot = new Node("AquaDoor");
         doorPivot.setLocalTranslation(cX + 20, 0, cZ - 2);
         g.attachChild(doorPivot);
-        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matTile, 0, 1.5f, 2.0f, doorPivot, true);
+        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matTile, 0, 1.5f, 2.0f, doorPivot, false);
         dGeom.setName("Door_Aqua");
         Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
     }
@@ -114,8 +114,12 @@ public class CampusBuilder {
             for (int b = 0; b < bays; b++) {
                 float bx = cX - BLD_L / 2f + bayW * (b + 0.5f);
                 float y = 3.2f + 6.0f * t;
-                makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ - BLD_D / 2f, g, true);
-                makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ + BLD_D / 2f, g, true);
+                if (t == 0 && (b == 3 || b == 4)) {
+                    makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ + BLD_D / 2f, g, true);
+                } else {
+                    makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ - BLD_D / 2f, g, true);
+                    makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ + BLD_D / 2f, g, true);
+                }
             }
         }
         
@@ -123,7 +127,7 @@ public class CampusBuilder {
         Node doorPivot = new Node("MallDoor");
         doorPivot.setLocalTranslation(cX, 0, cZ - BLD_D / 2f);
         g.attachChild(doorPivot);
-        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matGlass, 0, 1.5f, 2.0f, doorPivot, true);
+        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matGlass, 0, 1.5f, 2.0f, doorPivot, false);
         dGeom.setName("Door_Mall");
         Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
         
@@ -200,6 +204,67 @@ public class CampusBuilder {
         buildSeasideBoulevard();
     }
     
+    
+    
+    private void makeWallWithDoor(float w, float h, float d, com.jme3.math.ColorRGBA color, float x, float y, float z, com.jme3.scene.Node parent, float doorX, float doorW, float doorH, boolean isZAligned) {
+        float h2 = h / 2f;
+        float doorY = doorH / 2f;
+        // The door frame color
+        com.jme3.math.ColorRGBA frameCol = color.mult(0.8f);
+        
+        if (isZAligned) {
+            // Wall runs along Z (width is small, depth is large)
+            // doorX represents the Z coordinate of the door center
+            float wallZStart = z - d/2f;
+            float wallZEnd = z + d/2f;
+            
+            float leftLen = (doorX - doorW/2f) - wallZStart;
+            if (leftLen > 0) {
+                makeBox(w, h, leftLen, color, x, y, wallZStart + leftLen/2f, parent, true);
+            }
+            
+            float rightLen = wallZEnd - (doorX + doorW/2f);
+            if (rightLen > 0) {
+                makeBox(w, h, rightLen, color, x, y, wallZEnd - rightLen/2f, parent, true);
+            }
+            
+            // Header
+            float headH = h - doorH;
+            if (headH > 0) {
+                makeBox(w, headH, doorW, color, x, doorH + headH/2f, doorX, parent, true);
+            }
+            
+            // Frame
+            makeBox(w+0.1f, doorH, 0.1f, frameCol, x, doorY, doorX - doorW/2f, parent, true);
+            makeBox(w+0.1f, doorH, 0.1f, frameCol, x, doorY, doorX + doorW/2f, parent, true);
+            makeBox(w+0.1f, 0.1f, doorW, frameCol, x, doorH, doorX, parent, true);
+        } else {
+            // Wall runs along X
+            float wallXStart = x - w/2f;
+            float wallXEnd = x + w/2f;
+            
+            float leftLen = (doorX - doorW/2f) - wallXStart;
+            if (leftLen > 0) {
+                makeBox(leftLen, h, d, color, wallXStart + leftLen/2f, y, z, parent, true);
+            }
+            
+            float rightLen = wallXEnd - (doorX + doorW/2f);
+            if (rightLen > 0) {
+                makeBox(rightLen, h, d, color, wallXEnd - rightLen/2f, y, z, parent, true);
+            }
+            
+            float headH = h - doorH;
+            if (headH > 0) {
+                makeBox(doorW, headH, d, color, doorX, doorH + headH/2f, z, parent, true);
+            }
+            
+            // Frame
+            makeBox(0.1f, doorH, d+0.1f, frameCol, doorX - doorW/2f, doorY, z, parent, true);
+            makeBox(0.1f, doorH, d+0.1f, frameCol, doorX + doorW/2f, doorY, z, parent, true);
+            makeBox(doorW, 0.1f, d+0.1f, frameCol, doorX, doorH, z, parent, true);
+        }
+    }
+
     private Geometry makeBox(float w, float h, float d, ColorRGBA color, float x, float y, float z, Node parent, boolean cast, boolean recv, boolean collide) {
         Box box = new Box(w / 2f, h / 2f, d / 2f);
         Geometry geom = new Geometry("Box", box);
@@ -227,9 +292,11 @@ public class CampusBuilder {
         return geom;
     }
     
+    
     private Geometry makeBox(float w, float h, float d, ColorRGBA color, float x, float y, float z, Node parent) {
         return makeBox(w, h, d, color, x, y, z, parent, true, true, false);
     }
+    
     
     private Geometry makeBox(float w, float h, float d, ColorRGBA color, float x, float y, float z, Node parent, boolean collide) {
         return makeBox(w, h, d, color, x, y, z, parent, true, true, collide);
@@ -297,7 +364,7 @@ public class CampusBuilder {
         Node doorPivot = new Node("CafeDoor");
         doorPivot.setLocalTranslation(cX - 12, 0, cZ - 2);
         g.attachChild(doorPivot);
-        Geometry dGeom = makeBox(0.1f, 2.4f, 4.0f, matWood, 0, 1.2f, 2.0f, doorPivot, true);
+        Geometry dGeom = makeBox(0.1f, 2.4f, 4.0f, matWood, 0, 1.2f, 2.0f, doorPivot, false);
         dGeom.setName("Door_Cafe");
         Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
         
@@ -342,7 +409,7 @@ public class CampusBuilder {
         Node doorPivot = new Node("GymDoor");
         doorPivot.setLocalTranslation(cX - 12, 0, cZ - 2);
         g.attachChild(doorPivot);
-        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matSteel, 0, 1.5f, 2.0f, doorPivot, true);
+        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matSteel, 0, 1.5f, 2.0f, doorPivot, false);
         dGeom.setName("Door_Gym");
         Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
         
@@ -472,7 +539,7 @@ public class CampusBuilder {
         Node doorPivot = new Node("CouncilDoor");
         doorPivot.setLocalTranslation(cX - 6.0f, 4.25f * 3, cZ - 1.2f);
         g.attachChild(doorPivot);
-        Geometry dGeom = makeBox(0.1f, 2.4f, 2.4f, matMahogany, 0, 1.2f, 1.2f, doorPivot, true);
+        Geometry dGeom = makeBox(0.1f, 2.4f, 2.4f, matMahogany, 0, 1.2f, 1.2f, doorPivot, false);
         dGeom.setName("Door_Council");
         Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
     }
@@ -520,7 +587,7 @@ public class CampusBuilder {
         Node doorPivot = new Node("LibraryDoor");
         doorPivot.setLocalTranslation(cX + 12, 0, cZ - 2);
         g.attachChild(doorPivot);
-        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matGlass, 0, 1.5f, 2.0f, doorPivot, true);
+        Geometry dGeom = makeBox(0.1f, 3.0f, 4.0f, matGlass, 0, 1.5f, 2.0f, doorPivot, false);
         dGeom.setName("Door_Library");
         Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
     }
