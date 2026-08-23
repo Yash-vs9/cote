@@ -75,7 +75,10 @@ public class CampusBuilder {
         makeBox(40, 6.0f, 0.2f, matWater, cX, 3.4f, cZ + 12, g, true);
         makeWallWithDoor(0.2f, 6.0f, 24, matWater, cX + 20, 3.4f, cZ, g, cZ, 4.0f, 3.0f, true);
         makeBox(0.2f, 6.0f, 24, matWater, cX - 20, 3.4f, cZ, g, true);
-        
+
+        // Glass roof (encloses the natatorium)
+        makeBox(40.4f, 0.3f, 24.4f, matWall, cX, 6.55f, cZ, g, false);
+
         // Door
         Node doorPivot = new Node("AquaDoor");
         doorPivot.setLocalTranslation(cX + 20, 0, cZ - 2);
@@ -123,6 +126,11 @@ public class CampusBuilder {
             }
         }
         
+        // East & West end walls (were open) + roof cap so the mall is fully enclosed.
+        makeBox(0.3f, BLD_H, BLD_D, matGlass, cX - BLD_L / 2f, BLD_H / 2f, cZ, g, true);
+        makeBox(0.3f, BLD_H, BLD_D, matGlass, cX + BLD_L / 2f, BLD_H / 2f, cZ, g, true);
+        makeBox(BLD_L + 0.4f, 0.4f, BLD_D + 0.4f, matDark, cX, BLD_H, cZ, g, false);
+
         // Door
         Node doorPivot = new Node("MallDoor");
         doorPivot.setLocalTranslation(cX, 0, cZ - BLD_D / 2f);
@@ -202,6 +210,32 @@ public class CampusBuilder {
         buildAquaticCenter();
         buildKeyakiMall();
         buildSeasideBoulevard();
+
+        // Floating name signs above each building.
+        addSign("Academic Building", 0, 19f, -43);   // above the entrance, facing campus
+        addSign("Dormitory", -34, 9f, 72);           // above dorm entrance (tower is 48m tall)
+        addSign("School Cafeteria", 62, 6.5f, -8);
+        addSign("Gymnasium", 62, 9.5f, 16);
+        addSign("Memorial Library", -62, 9.5f, 10);
+        addSign("Aquatic Center", -62, 8.5f, 80);
+        addSign("Keyaki Mall", 44, 20f, 64);
+        addSign("ANHS Main Gate", 0, 8.5f, 95);
+    }
+
+    /** A camera-facing text label floating in the world (building name). */
+    private void addSign(String text, float x, float y, float z) {
+        com.jme3.font.BitmapFont font = assetManager.loadFont("Interface/Fonts/Default.fnt");
+        com.jme3.font.BitmapText bt = new com.jme3.font.BitmapText(font);
+        bt.setText(text);
+        bt.setSize(3.4f);
+        bt.setColor(new ColorRGBA(1f, 0.95f, 0.55f, 1f)); // bright amber, easy to read
+        bt.setQueueBucket(RenderQueue.Bucket.Transparent);
+        bt.setLocalTranslation(-bt.getLineWidth() / 2f, 0, 0); // center horizontally
+        Node holder = new Node("Sign");
+        holder.attachChild(bt);
+        holder.addControl(new com.jme3.scene.control.BillboardControl());
+        holder.setLocalTranslation(x, y, z);
+        rootNode.attachChild(holder);
     }
     
     
@@ -351,11 +385,14 @@ public class CampusBuilder {
         float cX = 62, cZ = -20;
 
         ColorRGBA matFloor = new ColorRGBA(0.9f, 0.83f, 0.7f, 1.0f);
-        ColorRGBA matWall = new ColorRGBA(0.95f, 0.94f, 0.91f, 1.0f);
+        ColorRGBA matWall = new ColorRGBA(0.96f, 0.78f, 0.55f, 1.0f); // warm apricot cafeteria
         ColorRGBA matSteel = new ColorRGBA(0.6f, 0.6f, 0.65f, 1.0f);
         ColorRGBA matWood = new ColorRGBA(0.5f, 0.3f, 0.2f, 1.0f);
+        ColorRGBA matAccent = new ColorRGBA(0.85f, 0.35f, 0.20f, 1.0f); // terracotta trim
 
         makeBox(24, 0.05f, 24, matFloor, cX, 0.02f, cZ, g, true);
+        makeBox(24, 0.6f, 0.35f, matAccent, cX, 4.7f, cZ - 12.0f, g, false); // cornice
+        makeBox(24, 0.6f, 0.35f, matAccent, cX, 4.7f, cZ + 12.0f, g, false);
         makeBox(24, 5.0f, 0.3f, matWall, cX, 2.5f, cZ - 12.0f, g, true);
         makeBox(24, 5.0f, 0.3f, matWall, cX, 2.5f, cZ + 12.0f, g, true);
         makeBox(0.3f, 5.0f, 24, matWall, cX + 12.0f, 2.5f, cZ, g, true);
@@ -363,7 +400,10 @@ public class CampusBuilder {
         makeBox(0.3f, 5.0f, 10.0f, matWall, cX - 12.0f, 2.5f, cZ - 7.0f, g, true);
         makeBox(0.3f, 5.0f, 10.0f, matWall, cX - 12.0f, 2.5f, cZ + 7.0f, g, true);
         makeBox(0.3f, 1.5f, 4.0f, matWall, cX - 12.0f, 4.25f, cZ, g, true);
-        
+
+        // Roof (encloses the cafeteria)
+        makeBox(24.4f, 0.4f, 24.4f, matAccent, cX, 5.15f, cZ, g, false);
+
         // Door
         Node doorPivot = new Node("CafeDoor");
         doorPivot.setLocalTranslation(cX - 12, 0, cZ - 2);
@@ -372,16 +412,40 @@ public class CampusBuilder {
         dGeom.setName("Door_Cafe");
         Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
         
-        // Kitchen / Serving Counter (East side)
+        // Kitchen / Serving Counter (East side) with food trays on top
         makeBox(4.0f, 1.2f, 16.0f, matSteel, cX + 8.0f, 0.6f, cZ, g, true); // Counter
-        
-        // Dining Tables
-        for (float dx = -6; dx <= 2; dx += 4) {
-            for (float dz = -8; dz <= 8; dz += 5) {
-                makeBox(2.0f, 0.8f, 3.0f, matWood, cX + dx, 0.4f, cZ + dz, g, true);
-                // Chairs
-                makeBox(0.5f, 0.5f, 0.5f, matSteel, cX + dx + 1.5f, 0.25f, cZ + dz, g, true);
-                makeBox(0.5f, 0.5f, 0.5f, matSteel, cX + dx - 1.5f, 0.25f, cZ + dz, g, true);
+        ColorRGBA[] trayFood = {
+            new ColorRGBA(0.85f,0.65f,0.30f,1f), new ColorRGBA(0.30f,0.55f,0.25f,1f),
+            new ColorRGBA(0.80f,0.25f,0.20f,1f), new ColorRGBA(0.95f,0.90f,0.70f,1f) };
+        for (int i = 0; i < 6; i++) {
+            float tz = cZ - 7 + i * 2.8f;
+            makeBox(1.6f, 0.1f, 1.0f, matSteel, cX + 8.0f, 1.25f, tz, g, false);      // serving tray
+            makeBox(1.0f, 0.18f, 0.6f, trayFood[i % trayFood.length], cX + 8.0f, 1.36f, tz, g, false); // food
+        }
+
+        // Round dining tables with plates, food, cups and chairs
+        ColorRGBA matPlate = new ColorRGBA(0.97f, 0.97f, 0.97f, 1f);
+        ColorRGBA matCup = new ColorRGBA(0.75f, 0.82f, 0.90f, 1f);
+        ColorRGBA[] mealCol = {
+            new ColorRGBA(0.85f,0.35f,0.25f,1f), new ColorRGBA(0.55f,0.75f,0.35f,1f),
+            new ColorRGBA(0.90f,0.80f,0.45f,1f), new ColorRGBA(0.70f,0.45f,0.30f,1f) };
+        float[][] seat = { {0.62f, 0}, {-0.62f, 0}, {0, 0.62f}, {0, -0.62f} };
+        int tbl = 0;
+        for (float dx = -7; dx <= -1; dx += 6) {
+            for (float dz = -8; dz <= 8; dz += 8) {
+                float tx = cX + dx, tz = cZ + dz;
+                makeCylinder(0.14f, 0.75f, 10, matSteel, tx, 0.375f, tz, g, true);   // pedestal
+                makeCylinder(0.85f, 0.10f, 20, matWood, tx, 0.80f, tz, g, true);      // round top
+                for (int s = 0; s < 4; s++) {
+                    float px = tx + seat[s][0], pz = tz + seat[s][1];
+                    makeCylinder(0.16f, 0.03f, 12, matPlate, px, 0.87f, pz, g, false);          // plate
+                    makeBox(0.14f, 0.07f, 0.14f, mealCol[(tbl + s) % mealCol.length], px, 0.91f, pz, g, false); // food
+                    makeCylinder(0.05f, 0.10f, 8, matCup, px + 0.22f, 0.90f, pz, g, false);      // cup
+                    float cx2 = tx + seat[s][0] * 1.9f, cz2 = tz + seat[s][1] * 1.9f;
+                    makeBox(0.45f, 0.5f, 0.45f, matSteel, cx2, 0.25f, cz2, g, true);             // chair seat
+                    makeBox(0.45f, 0.5f, 0.1f, matSteel, cx2, 0.75f, cz2 - 0.2f, g, false);      // chair back
+                }
+                tbl++;
             }
         }
     }
@@ -392,22 +456,28 @@ public class CampusBuilder {
         float cX = 62, cZ = 30;
 
         ColorRGBA matFloor = new ColorRGBA(0.9f, 0.7f, 0.5f, 1.0f);
-        ColorRGBA matWall = new ColorRGBA(0.85f, 0.85f, 0.85f, 1.0f);
+        ColorRGBA matWall = new ColorRGBA(0.85f, 0.85f, 0.85f, 1.0f); // court lines / backboards
+        ColorRGBA matExt = new ColorRGBA(0.30f, 0.55f, 0.80f, 1.0f);  // energetic blue exterior
         ColorRGBA matWood = new ColorRGBA(0.6f, 0.4f, 0.2f, 1.0f);
         ColorRGBA matSteel = new ColorRGBA(0.6f, 0.6f, 0.6f, 1.0f);
         ColorRGBA matRed = new ColorRGBA(0.8f, 0.1f, 0.1f, 1.0f);
 
         // Floor
         makeBox(24, 0.05f, 28, matFloor, cX, 0.02f, cZ, g, true);
-        
-        // Walls
-        makeBox(24, 8.0f, 0.4f, matWall, cX, 4.0f, cZ - 14.0f, g, true);
-        makeBox(24, 8.0f, 0.4f, matWall, cX, 4.0f, cZ + 14.0f, g, true);
-        makeBox(0.4f, 8.0f, 28, matWall, cX + 12.0f, 4.0f, cZ, g, true);
-        
-        makeBox(0.4f, 8.0f, 12.0f, matWall, cX - 12.0f, 4.0f, cZ - 8.0f, g, true);
-        makeBox(0.4f, 8.0f, 12.0f, matWall, cX - 12.0f, 4.0f, cZ + 8.0f, g, true);
-        makeBox(0.4f, 2.0f, 4.0f, matWall, cX - 12.0f, 7.0f, cZ, g, true);
+
+        // Walls (blue exterior with a red accent stripe near the top)
+        makeBox(24, 8.0f, 0.4f, matExt, cX, 4.0f, cZ - 14.0f, g, true);
+        makeBox(24, 8.0f, 0.4f, matExt, cX, 4.0f, cZ + 14.0f, g, true);
+        makeBox(0.4f, 8.0f, 28, matExt, cX + 12.0f, 4.0f, cZ, g, true);
+        makeBox(24.2f, 0.7f, 0.5f, matRed, cX, 7.2f, cZ - 14.0f, g, false);
+        makeBox(24.2f, 0.7f, 0.5f, matRed, cX, 7.2f, cZ + 14.0f, g, false);
+
+        makeBox(0.4f, 8.0f, 12.0f, matExt, cX - 12.0f, 4.0f, cZ - 8.0f, g, true);
+        makeBox(0.4f, 8.0f, 12.0f, matExt, cX - 12.0f, 4.0f, cZ + 8.0f, g, true);
+        makeBox(0.4f, 2.0f, 4.0f, matExt, cX - 12.0f, 7.0f, cZ, g, true);
+
+        // Roof (encloses the gymnasium)
+        makeBox(24.4f, 0.4f, 28.4f, matExt, cX, 8.15f, cZ, g, false);
         
         // Door
         Node doorPivot = new Node("GymDoor");
@@ -442,11 +512,12 @@ public class CampusBuilder {
         rootNode.attachChild(g);
         float cZ = 95;
 
-        ColorRGBA matStone = new ColorRGBA(0.58f, 0.64f, 0.72f, 1.0f);
+        ColorRGBA matStone = new ColorRGBA(0.92f, 0.90f, 0.86f, 1.0f); // clean pale stone
+        ColorRGBA matRed = new ColorRGBA(0.70f, 0.20f, 0.25f, 1.0f);   // ANHS red gate beam
 
         makeBox(2.0f, 6.0f, 2.0f, matStone, -14, 3.0f, cZ, g);
         makeBox(2.0f, 6.0f, 2.0f, matStone, 14, 3.0f, cZ, g);
-        makeBox(30, 1.0f, 1.0f, matStone, 0, 6.2f, cZ, g);
+        makeBox(30, 1.0f, 1.0f, matRed, 0, 6.2f, cZ, g);
         
         addCollider(-14, 10f, cZ, 2.2f, 20f, 2.2f);
         addCollider(14, 10f, cZ, 2.2f, 20f, 2.2f);
@@ -569,6 +640,9 @@ public class CampusBuilder {
         makeBox(0.4f, 8.0f, 10, matGlass, cX + 12, 4.0f, cZ - 7, g, true);
         makeBox(0.4f, 8.0f, 10, matGlass, cX + 12, 4.0f, cZ + 7, g, true);
         makeBox(0.4f, 5.0f, 4, matGlass, cX + 12, 5.5f, cZ, g, true);
+
+        // Roof (encloses the library)
+        makeBox(24.4f, 0.4f, 24.4f, matWood, cX, 8.15f, cZ, g, false);
 
         // Bookshelves (Floor 1)
         for (float rX : new float[]{-8, -2, 4}) {

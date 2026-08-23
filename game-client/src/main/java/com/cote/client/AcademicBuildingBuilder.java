@@ -92,11 +92,12 @@ public class AcademicBuildingBuilder {
 
         ColorRGBA steel        = new ColorRGBA(0.22f, 0.24f, 0.25f, 1.0f);
         ColorRGBA glass        = new ColorRGBA(0.66f, 0.76f, 0.83f, 0.8f);
-        ColorRGBA concrete     = new ColorRGBA(0.69f, 0.69f, 0.69f, 1.0f);
+        ColorRGBA concrete     = new ColorRGBA(0.94f, 0.90f, 0.80f, 1.0f); // warm cream facade
         ColorRGBA concreteDark = new ColorRGBA(0.50f, 0.51f, 0.53f, 1.0f);
+        ColorRGBA red          = new ColorRGBA(0.70f, 0.20f, 0.25f, 1.0f); // ANHS red trim
         ColorRGBA wood         = new ColorRGBA(0.36f, 0.22f, 0.13f, 1.0f);
         ColorRGBA floorMat     = new ColorRGBA(0.88f, 0.87f, 0.83f, 1.0f);
-        ColorRGBA wallIn       = new ColorRGBA(0.92f, 0.92f, 0.90f, 1.0f);
+        ColorRGBA wallIn       = new ColorRGBA(0.95f, 0.95f, 0.93f, 1.0f);
         ColorRGBA blackboard   = new ColorRGBA(0.15f, 0.25f, 0.20f, 1.0f);
 
         float bldH = FH * STORIES; // 17
@@ -107,6 +108,15 @@ public class AcademicBuildingBuilder {
         southWallWithEntrance(concrete, bldH, g);
         makeBox(1, bldH, 26, concrete, -30, bldH / 2, BZ, g, true);    // West wall (X -30)
         makeBox(1, bldH, 26, concrete, 30, bldH / 2, BZ, g, true);     // East wall (X 30)
+
+        // ANHS-red accent bands (base skirt + top cornice) on all four faces (cosmetic).
+        for (float[] band : new float[][]{ {0.5f, 1.0f}, {bldH - 0.6f, 1.2f} }) {
+            float by = band[0], bh = band[1];
+            makeBox(60.4f, bh, 1.2f, red, 0, by, BZ - 13, g, false);
+            makeBox(60.4f, bh, 1.2f, red, 0, by, BZ + 13, g, false);
+            makeBox(1.2f, bh, 26.4f, red, -30, by, BZ, g, false);
+            makeBox(1.2f, bh, 26.4f, red, 30, by, BZ, g, false);
+        }
 
         // Door centers used by the corridor walls (aligned with classrooms; X=0 is the lobby).
         float[] doorCenters = { -19.5f, 0f, 14f };

@@ -42,34 +42,34 @@ public class InteractiveElevator {
     }
     
     public void update(float tpf, Main gameMain) {
-        if (isMoving) {
-            float targetY = floorHeights.get(targetFloor);
-            Vector3f pos = platform.getLocalTranslation();
-            
-            float speed = 4.0f;
-            float step = speed * tpf;
-            
-            boolean playerOnBoard = false;
-            Vector3f pPos = gameMain.getCamera().getLocation();
-            if (Math.abs(pPos.x - pos.x) < 2.5f && Math.abs(pPos.z - pos.z) < 2.5f && pPos.y > pos.y && pPos.y < pos.y + 3.0f) {
-                playerOnBoard = true;
-            }
-            
-            if (Math.abs(pos.y - targetY) < step) {
-                pos.y = targetY;
-                isMoving = false;
-                currentFloor = targetFloor;
-            } else {
-                if (pos.y < targetY) pos.y += step;
-                else pos.y -= step;
-            }
-            platform.setLocalTranslation(pos);
-            
-            // Move player with elevator
-            if (playerOnBoard) {
-                pPos.y = pos.y + 2.0f;
-                gameMain.getCamera().setLocation(pPos);
-            }
+        if (!isMoving) return;
+        float targetY = floorHeights.get(targetFloor);
+        Vector3f local = platform.getLocalTranslation();
+
+        // World position of the platform (buildings can be offset from the origin,
+        // so we must compare against WORLD coords, not the platform's local ones).
+        Vector3f base = platform.getParent() != null
+                ? platform.getParent().getWorldTranslation() : new Vector3f();
+        float wx = base.x + local.x, wz = base.z + local.z, wy = base.y + local.y;
+
+        Vector3f pPos = gameMain.getCamera().getLocation();
+        boolean playerOnBoard = Math.abs(pPos.x - wx) < 2.5f && Math.abs(pPos.z - wz) < 2.5f
+                && pPos.y > wy && pPos.y < wy + 3.5f;
+
+        float step = 4.0f * tpf;
+        if (Math.abs(local.y - targetY) < step) {
+            local.y = targetY;
+            isMoving = false;
+            currentFloor = targetFloor;
+        } else {
+            local.y += (local.y < targetY) ? step : -step;
+        }
+        platform.setLocalTranslation(local);
+
+        // Carry the player up/down with the car.
+        if (playerOnBoard) {
+            pPos.y = base.y + local.y + 2.0f;
+            gameMain.getCamera().setLocation(pPos);
         }
     }
 }

@@ -12,6 +12,8 @@ public class InteractiveDoor {
     public float transitionTarget = 0f;
     public float currentAngle = 0f;
     public String label;
+    public boolean requiresKnock = false; // dorm room doors: must knock before entering
+    public boolean knocked = false;
 
     public InteractiveDoor(String label, Node pivot, Geometry geometry) {
         this.label = label;

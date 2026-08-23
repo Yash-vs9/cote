@@ -41,6 +41,7 @@ public class NPC {
 
     public String getId() { return id; }
     public String getName() { return name; }
+    public String getPersona() { return persona; }
     public String getRole() { return role; }
     public PersonalityTraits getTraits() { return traits; }
     public String getAssignedSeat() { return assignedSeat; }

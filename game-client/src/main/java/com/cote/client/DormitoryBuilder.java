@@ -100,13 +100,87 @@ public class DormitoryBuilder {
         return geom;
     }
 
+    /** Interior decor helper: like makeBox but never casts shadows (keeps the poly-heavy interiors fast). */
+    private void deco(float w, float h, float d, ColorRGBA c, float x, float y, float z, Node parent, boolean collide) {
+        Geometry g = makeBox(w, h, d, c, x, y, z, parent, collide);
+        g.setShadowMode(RenderQueue.ShadowMode.Off);
+    }
+
+    /** Detailed bedroom: bed set, nightstand + lamp, desk + chair, wardrobe, and an en-suite bathroom. */
+    private void furnishBedroom(Node g, float rx, float y) {
+        final float FH = 3.2f;
+        ColorRGBA wood     = new ColorRGBA(0.55f, 0.40f, 0.25f, 1f);
+        ColorRGBA woodDark = new ColorRGBA(0.40f, 0.28f, 0.18f, 1f);
+        ColorRGBA sheet    = new ColorRGBA(0.95f, 0.95f, 0.97f, 1f);
+        ColorRGBA blanket  = new ColorRGBA(0.35f, 0.45f, 0.72f, 1f);
+        ColorRGBA lampWarm = new ColorRGBA(0.98f, 0.88f, 0.55f, 1f);
+        ColorRGBA dark     = new ColorRGBA(0.15f, 0.14f, 0.13f, 1f);
+        ColorRGBA tile     = new ColorRGBA(0.90f, 0.93f, 0.96f, 1f);
+        ColorRGBA white    = new ColorRGBA(0.97f, 0.97f, 0.98f, 1f);
+        ColorRGBA book     = new ColorRGBA(0.75f, 0.22f, 0.22f, 1f);
+
+        // --- Bed ---
+        deco(1.5f, 0.35f, 2.4f, wood,    rx - 2.6f, y + 0.18f, -11.0f, g, true);
+        deco(1.4f, 0.22f, 2.2f, sheet,   rx - 2.6f, y + 0.42f, -11.0f, g, false);
+        deco(1.3f, 0.15f, 0.5f, white,   rx - 2.6f, y + 0.56f, -11.9f, g, false); // pillow
+        deco(1.4f, 0.12f, 1.4f, blanket, rx - 2.6f, y + 0.54f, -10.4f, g, false);
+
+        // --- Nightstand + lamp ---
+        deco(0.5f, 0.5f, 0.5f, wood,     rx - 1.4f, y + 0.25f, -12.0f, g, false);
+        deco(0.06f, 0.4f, 0.06f, dark,   rx - 1.4f, y + 0.70f, -12.0f, g, false);
+        deco(0.32f, 0.28f, 0.32f, lampWarm, rx - 1.4f, y + 1.02f, -12.0f, g, false); // lamp shade
+
+        // --- Desk + chair + book ---
+        deco(1.4f, 0.75f, 0.6f, wood,    rx - 2.5f, y + 0.375f, -4.5f, g, true);
+        deco(0.4f, 0.1f, 0.3f, book,     rx - 2.5f, y + 0.80f, -4.5f, g, false);
+        deco(0.5f, 0.5f, 0.5f, woodDark, rx - 2.5f, y + 0.25f, -5.4f, g, false);
+        deco(0.5f, 0.55f, 0.1f, woodDark, rx - 2.5f, y + 0.75f, -5.75f, g, false);
+
+        // --- Wardrobe ---
+        deco(1.0f, 2.0f, 0.6f, woodDark, rx - 0.2f, y + 1.0f, -12.6f, g, true);
+
+        // --- En-suite bathroom (partitioned corner) ---
+        deco(0.15f, FH, 2.6f, tile, rx + 0.9f, y + FH/2f, -7.0f, g, false);
+        deco(3.0f, FH, 0.15f, tile, rx + 2.4f, y + FH/2f, -8.3f, g, false);
+        deco(0.4f, 0.5f, 0.6f, white, rx + 3.3f, y + 0.30f, -7.6f, g, false); // toilet
+        deco(0.4f, 0.5f, 0.2f, white, rx + 3.3f, y + 0.55f, -8.1f, g, false);
+        deco(0.2f, 0.7f, 0.2f, white, rx + 1.6f, y + 0.35f, -7.9f, g, false); // sink
+        deco(0.55f, 0.15f, 0.4f, white, rx + 1.6f, y + 0.72f, -7.9f, g, false);
+        deco(0.4f, 0.5f, 0.04f, new ColorRGBA(0.7f,0.85f,0.9f,1f), rx + 1.6f, y + 1.35f, -8.22f, g, false); // mirror
+    }
+
+    /** Shared floor kitchen (south side of the corridor): counter, sink, stove, fridge, table + chairs. */
+    private void furnishKitchen(Node g, float y) {
+        ColorRGBA counter = new ColorRGBA(0.82f, 0.80f, 0.76f, 1f);
+        ColorRGBA cabinet = new ColorRGBA(0.45f, 0.30f, 0.20f, 1f);
+        ColorRGBA steel   = new ColorRGBA(0.72f, 0.74f, 0.78f, 1f);
+        ColorRGBA fridge  = new ColorRGBA(0.90f, 0.92f, 0.95f, 1f);
+        ColorRGBA stove   = new ColorRGBA(0.20f, 0.20f, 0.22f, 1f);
+        ColorRGBA wood    = new ColorRGBA(0.55f, 0.40f, 0.25f, 1f);
+
+        float kz = 11f; // south side, between corridor (z+3) and outer wall (z+14)
+        // Counter run along the outer wall with upper cabinets
+        deco(9f, 0.9f, 0.7f, counter, 0, y + 0.45f, kz + 1.5f, g, true);
+        deco(9f, 0.7f, 0.5f, cabinet, 0, y + 2.2f, kz + 1.6f, g, false);
+        deco(0.6f, 0.15f, 0.5f, steel, -2.5f, y + 0.95f, kz + 1.5f, g, false); // sink basin
+        deco(0.8f, 0.1f, 0.6f, stove, 1.5f, y + 0.95f, kz + 1.5f, g, false);   // stovetop
+        // Fridge
+        deco(0.9f, 1.9f, 0.8f, fridge, 4.0f, y + 0.95f, kz + 1.4f, g, true);
+        // Dining table + chairs
+        deco(2.2f, 0.75f, 1.1f, wood, 0, y + 0.375f, kz - 1.5f, g, true);
+        deco(0.5f, 0.5f, 0.5f, cabinet, -0.8f, y + 0.25f, kz - 2.3f, g, false);
+        deco(0.5f, 0.5f, 0.5f, cabinet, 0.8f, y + 0.25f, kz - 2.3f, g, false);
+        deco(0.5f, 0.5f, 0.5f, cabinet, -0.8f, y + 0.25f, kz - 0.7f, g, false);
+        deco(0.5f, 0.5f, 0.5f, cabinet, 0.8f, y + 0.25f, kz - 0.7f, g, false);
+    }
+
     public void build() {
         Node g = new Node("ResidentialSW");
         g.setLocalTranslation(-34, 0, 58);
         rootNode.attachChild(g);
 
-        ColorRGBA matConcrete = new ColorRGBA(0.88f, 0.91f, 0.94f, 1.0f);
-        ColorRGBA matBalcony = new ColorRGBA(0.58f, 0.63f, 0.72f, 1.0f);
+        ColorRGBA matConcrete = new ColorRGBA(0.87f, 0.78f, 0.66f, 1.0f); // warm beige residential
+        ColorRGBA matBalcony = new ColorRGBA(0.72f, 0.45f, 0.35f, 1.0f);  // terracotta accent
         ColorRGBA matDarkGlass = new ColorRGBA(0.11f, 0.16f, 0.23f, 0.8f);
         ColorRGBA matWood = new ColorRGBA(0.55f, 0.40f, 0.25f, 1.0f);
         ColorRGBA matBed = new ColorRGBA(0.9f, 0.9f, 0.9f, 1.0f);
@@ -149,11 +223,9 @@ public class DormitoryBuilder {
                     // North rooms
                     makeBox(0.2f, FH, 11, matConcrete, rx + 4, y + FH/2, -8.5f, g, true);
                     
-                    // Inside dorm room
-                    if (f == 1 && rx == -8) { // Detail just one room (Ayanokouji's room) to save polys
-                        makeBox(1.2f, 0.6f, 2.0f, matBed, rx, y + 0.3f, -12, g, true); // Bed
-                        makeBox(1.5f, 0.8f, 0.8f, matWood, rx + 2, y + 0.4f, -5, g, true); // Desk
-                        makeBox(1.0f, 2.0f, 0.8f, matWood, rx - 2, y + 1.0f, -5, g, true); // Wardrobe
+                    // Fully furnished bedrooms on EVERY residential floor.
+                    if (f >= 1) {
+                        furnishBedroom(g, rx, y);
                     }
                     
                     // Door
@@ -162,7 +234,14 @@ public class DormitoryBuilder {
                     g.attachChild(doorPivot);
                     Geometry dGeom = makeBox(1.0f, 2.2f, 0.1f, matWood, 0.5f, 1.1f, 0, doorPivot, false);
                     dGeom.setName("Door_Dorm_" + f);
-                    Main.doors.add(new InteractiveDoor(dGeom.getName(), doorPivot, dGeom));
+                    InteractiveDoor roomDoor = new InteractiveDoor(dGeom.getName(), doorPivot, dGeom);
+                    roomDoor.requiresKnock = true; // must knock before entering a private room
+                    Main.doors.add(roomDoor);
+                }
+
+                // Shared kitchen on the south side of every residential floor.
+                if (f >= 1) {
+                    furnishKitchen(g, y);
                 }
             }
         }

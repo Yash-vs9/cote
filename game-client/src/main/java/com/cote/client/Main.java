@@ -30,7 +30,8 @@ public class Main extends SimpleApplication {
 
     private float interactionCooldown = 0f;
     private com.jme3.font.BitmapText interactionText;
-    private NpcManager npcManager;
+    private com.jme3.font.BitmapText clockLabel;
+    private NpcController npcController;
 
     public static final java.util.List<InteractiveDoor> doors = new java.util.ArrayList<>();
     public static final java.util.List<InteractiveElevator> elevators = new java.util.ArrayList<>();
@@ -45,10 +46,6 @@ public class Main extends SimpleApplication {
         builder.buildAll();
         rootNode.attachChild(builder.rootNode);
         
-        // Initialize NPCs
-        npcManager = new NpcManager();
-        npcManager.init(assetManager, rootNode);
-
         // Setup lighting
         sun = new DirectionalLight();
         sun.setDirection(new Vector3f(-0.5f, -1f, -0.5f).normalizeLocal());
@@ -130,17 +127,26 @@ public class Main extends SimpleApplication {
         inputManager.addMapping("StrafeRight", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_D));
         inputManager.addMapping("Interact", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_E));
         inputManager.addMapping("Sprint", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_LSHIFT));
+        inputManager.addMapping("TimeBack", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_LBRACKET));
+        inputManager.addMapping("TimeFwd", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_RBRACKET));
+        inputManager.addMapping("TimeMorning", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_F1));
+        inputManager.addMapping("TimeNoon", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_F2));
+        inputManager.addMapping("TimeEvening", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_F3));
+        inputManager.addMapping("TimeNight", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_F4));
 
         com.jme3.input.controls.ActionListener actionListener = this::onAction;
-        inputManager.addListener(actionListener, "WalkForward", "WalkBackward", "StrafeLeft", "StrafeRight", "Interact", "Sprint");
+        inputManager.addListener(actionListener, "WalkForward", "WalkBackward", "StrafeLeft", "StrafeRight", "Interact", "Sprint",
+                "TimeBack", "TimeFwd", "TimeMorning", "TimeNoon", "TimeEvening", "TimeNight");
         
-        // 7. Initialize Simulation Engine (Phase 3)
+        // 7. Initialize Simulation Engine (Phase 3) + NPC movement controller.
         engine = new com.cote.simulation.SimulationEngine();
-        
+        npcController = new NpcController(engine);
+
         // 8. HUD & Dialogue (Phase 4)
         hud = new HudUI();
         stateManager.attach(hud);
-        
+        hud.setNpcController(npcController);
+
         // Start near the dorms
         cam.setLocation(new Vector3f(-34f, 1.4f, 40f));
     }
@@ -154,6 +160,18 @@ public class Main extends SimpleApplication {
     private com.cote.simulation.NPC nearestNpc = null;
     
     private void onAction(String name, boolean isPressed, float tpf) {
+        // Manual time control (works anytime, even while a UI panel is open).
+        if (isPressed && engine != null) {
+            switch (name) {
+                case "TimeBack":    engine.setClockMin(engine.getClockMin() - 60); return;
+                case "TimeFwd":     engine.setClockMin(engine.getClockMin() + 60); return;
+                case "TimeMorning": engine.setClockMin(7 * 60); return;
+                case "TimeNoon":    engine.setClockMin(12 * 60); return;
+                case "TimeEvening": engine.setClockMin(18 * 60); return;
+                case "TimeNight":   engine.setClockMin(22 * 60); return;
+            }
+        }
+
         // While the elevator panel is open, E closes it; all movement is locked.
         if (hud != null && hud.isElevatorActive()) {
             forward = false; backward = false; left = false; right = false;
@@ -173,7 +191,7 @@ public class Main extends SimpleApplication {
 
         if (name.equals("Interact") && isPressed) {
             if (nearestNpc != null) {
-                hud.openDialogue(nearestNpc);
+                hud.openDialogue(nearestNpc, describeLocation(cam.getLocation()), engine.getFormattedTime());
                 return;
             }
             // Elevator: open by PROXIMITY. Raycasting a floor-level platform never hits
@@ -198,7 +216,16 @@ public class Main extends SimpleApplication {
                     while (s != null) {
                         String sn = s.getName();
                         if (sn != null) {
-                            for (InteractiveDoor d : doors) if (d.label.equals(sn)) { d.interact(); return; }
+                            for (InteractiveDoor d : doors) if (d.label.equals(sn)) {
+                                if (d.requiresKnock && !d.knocked && !d.isOpen) {
+                                    d.knocked = true;
+                                    knock();
+                                    hud.showActionPrompt("*knock knock*  — press E again to enter");
+                                } else {
+                                    d.interact();
+                                }
+                                return;
+                            }
                             for (InteractiveElevator e : elevators) if (e.label.equals(sn)) { hud.openElevator(e); return; }
                         }
                         s = s.getParent();
@@ -221,10 +248,27 @@ public class Main extends SimpleApplication {
                 settings.getWidth() / 2f - ch.getLineWidth() / 2f,
                 settings.getHeight() / 2f + ch.getLineHeight() / 2f, 0);
         guiNode.attachChild(ch);
+
+        clockLabel = new com.jme3.font.BitmapText(guiFont, false);
+        clockLabel.setSize(guiFont.getCharSet().getRenderedSize() * 1.3f);
+        clockLabel.setColor(new ColorRGBA(1f, 1f, 0.85f, 1f));
+        clockLabel.setLocalTranslation(14, settings.getHeight() - 10, 0);
+        guiNode.attachChild(clockLabel);
+    }
+
+    private String phaseName(float clockMin) {
+        if (clockMin < 300 || clockMin >= 1200) return "Night";
+        if (clockMin < 660) return "Morning";
+        if (clockMin < 1020) return "Day";
+        return "Evening";
     }
 
     public void simpleUpdate(float tpf) {
-        if (npcManager != null) npcManager.update(tpf);
+        if (clockLabel != null && engine != null) {
+            float cm = (float) engine.getClockMin();
+            clockLabel.setText(engine.getFormattedTime() + "  " + phaseName(cm)
+                    + "    [ / ] hour   F1-F4 morning/noon/evening/night");
+        }
 
         // Movement is locked during dialogue or while the elevator panel is open.
         boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()));
@@ -285,9 +329,10 @@ public class Main extends SimpleApplication {
             }
         }
         
-        // Tick Engine
+        // Tick Engine (schedule/personality brain), then walk NPCs along routes.
         time += tpf;
-        engine.tick(tpf); // Tick real time per frame (or scaled)
+        engine.tick(tpf);
+        if (npcController != null) npcController.update(tpf);
         
         // Update NPCs and find nearest
         nearestNpc = null;
@@ -297,7 +342,10 @@ public class Main extends SimpleApplication {
         for (com.cote.simulation.NPC npc : engine.getNpcs()) {
             Rig rig = npcRigs.get(npc.getId());
             if (rig == null) {
-                String gender = (npc.getId().equals("horikita") || npc.getId().equals("kushida") || npc.getId().equals("chabashira")) ? "f" : "m";
+                String id = npc.getId();
+                boolean female = id.equals("horikita") || id.equals("kushida") || id.equals("chabashira")
+                        || id.equals("karuizawa") || id.equals("sakura");
+                String gender = female ? "f" : "m";
                 rig = new Rig(assetManager, gender);
                 npcRigs.put(npc.getId(), rig);
                 rootNode.attachChild(rig.root);
@@ -306,18 +354,23 @@ public class Main extends SimpleApplication {
             float targetX = (float) npc.getX();
             float targetZ = (float) npc.getZ();
             
+            float targetY = npcController.getY(npc.getId());
             Vector3f currentPos = rig.root.getLocalTranslation();
-            
+
             boolean isMoving = false;
-            if (currentPos.x != targetX || currentPos.z != targetZ) {
+            float dx = targetX - currentPos.x, dz = targetZ - currentPos.z;
+            if (dx * dx + dz * dz > 0.0004f) { // >2cm: actually walking
                 isMoving = true;
-                currentPos.x += (targetX - currentPos.x) * Math.min(1.0f, tpf * 10f);
-                currentPos.z += (targetZ - currentPos.z) * Math.min(1.0f, tpf * 10f);
-                rig.root.setLocalTranslation(currentPos);
+                currentPos.x += dx * Math.min(1.0f, tpf * 10f);
+                currentPos.z += dz * Math.min(1.0f, tpf * 10f);
             }
+            currentPos.y += (targetY - currentPos.y) * Math.min(1.0f, tpf * 6f); // ride lift vertically
+            rig.root.setLocalTranslation(currentPos);
             
             com.jme3.math.Quaternion targetRot = new com.jme3.math.Quaternion().fromAngles(0, (float) npc.getFacing(), 0);
-            rig.root.getLocalRotation().slerp(targetRot, Math.min(1.0f, tpf * 8f));
+            com.jme3.math.Quaternion curRot = rig.root.getLocalRotation().clone();
+            curRot.slerp(targetRot, Math.min(1.0f, tpf * 8f));
+            rig.root.setLocalRotation(curRot);
             
             rig.animate(time, tpf, isMoving || npc.getState().equals("moving"));
             
@@ -326,54 +379,15 @@ public class Main extends SimpleApplication {
                 minDst = dst;
                 nearestNpc = npc;
             }
+
+            // Announce when an NPC finishes a player-commanded errand.
+            String arrived = npcController.pollArrival(npc.getId());
+            if (arrived != null && hud != null) hud.flash(npc.getName() + " arrived at " + arrived + ".");
         }
         
         
-        // 4. Update Atmosphere (Day/Night) based on Simulation Clock
-        float clockMin = (float) engine.getClockMin(); // e.g. 465 (7:45 AM) to 1440 (midnight)
-        float normalizedTime = (clockMin - 400) / 1000f; // roughly 0 at 6:40 AM, 1.0 at 11:20 PM
-        normalizedTime = Math.max(0, Math.min(1, normalizedTime));
-        
-        ColorRGBA daySky = new ColorRGBA(0.62f, 0.76f, 0.88f, 1.0f);
-        ColorRGBA daySun = new ColorRGBA(1.0f, 0.96f, 0.9f, 1.0f);
-        ColorRGBA dayAmb = new ColorRGBA(0.4f, 0.45f, 0.5f, 1.0f);
-        
-        ColorRGBA sunsetSky = new ColorRGBA(0.9f, 0.4f, 0.2f, 1.0f);
-        ColorRGBA sunsetSun = new ColorRGBA(1.0f, 0.3f, 0.1f, 1.0f);
-        ColorRGBA sunsetAmb = new ColorRGBA(0.4f, 0.2f, 0.2f, 1.0f);
-        
-        ColorRGBA nightSky = new ColorRGBA(0.05f, 0.05f, 0.1f, 1.0f);
-        ColorRGBA nightSun = new ColorRGBA(0.1f, 0.1f, 0.2f, 1.0f);
-        ColorRGBA nightAmb = new ColorRGBA(0.1f, 0.15f, 0.25f, 1.0f);
-        
-        ColorRGBA curSky = new ColorRGBA();
-        ColorRGBA curSun = new ColorRGBA();
-        ColorRGBA curAmb = new ColorRGBA();
-        
-        if (clockMin < 1000) { // Before 16:40 (4:40 PM) - Day
-            curSky.interpolateLocal(daySky, daySky, 1.0f);
-            curSun.interpolateLocal(daySun, daySun, 1.0f);
-            curAmb.interpolateLocal(dayAmb, dayAmb, 1.0f);
-        } else if (clockMin < 1100) { // Sunset transition
-            float t = (clockMin - 1000) / 100f;
-            curSky.interpolateLocal(daySky, sunsetSky, t);
-            curSun.interpolateLocal(daySun, sunsetSun, t);
-            curAmb.interpolateLocal(dayAmb, sunsetAmb, t);
-        } else if (clockMin < 1200) { // Night transition
-            float t = (clockMin - 1100) / 100f;
-            curSky.interpolateLocal(sunsetSky, nightSky, t);
-            curSun.interpolateLocal(sunsetSun, nightSun, t);
-            curAmb.interpolateLocal(sunsetAmb, nightAmb, t);
-        } else { // Night
-            curSky.interpolateLocal(nightSky, nightSky, 1.0f);
-            curSun.interpolateLocal(nightSun, nightSun, 1.0f);
-            curAmb.interpolateLocal(nightAmb, nightAmb, 1.0f);
-        }
-        
-        viewPort.setBackgroundColor(curSky);
-        fog.setFogColor(curSky);
-        sun.setColor(curSun);
-        ambient.setColor(curAmb);
+        // 4. Update Atmosphere: morning / noon / evening / night, smoothly blended.
+        applyTimeOfDay((float) engine.getClockMin());
 
         for (InteractiveDoor d : doors) d.update(tpf);
         for (InteractiveElevator e : elevators) e.update(tpf, this);
@@ -396,5 +410,102 @@ public class Main extends SimpleApplication {
         } else if (hud != null) {
             hud.hidePrompt();
         }
+    }
+
+    // Keyframes across the 24h clock (minutes): night -> morning -> noon -> evening -> night.
+    private static final float[] TOD_T   = { 0f, 360f, 540f, 720f, 1080f, 1260f, 1440f };
+    private static final float[][] TOD_SKY = {
+        {0.05f,0.06f,0.12f}, // 00:00 night
+        {0.86f,0.63f,0.55f}, // 06:00 dawn (warm haze)
+        {0.62f,0.78f,0.90f}, // 09:00 morning
+        {0.55f,0.75f,0.96f}, // 12:00 noon (bright)
+        {0.94f,0.46f,0.22f}, // 18:00 evening (sunset orange)
+        {0.10f,0.09f,0.16f}, // 21:00 night falling
+        {0.05f,0.06f,0.12f}, // 24:00 == 00:00
+    };
+    private static final float[][] TOD_SUN = {
+        {0.22f,0.26f,0.42f}, // moonlight
+        {1.00f,0.76f,0.55f}, // low warm dawn
+        {1.00f,0.94f,0.83f}, // soft morning
+        {1.00f,0.98f,0.95f}, // bright neutral noon
+        {1.00f,0.56f,0.30f}, // warm orange evening
+        {0.22f,0.26f,0.42f},
+        {0.22f,0.26f,0.42f},
+    };
+    private static final float[][] TOD_AMB = {
+        {0.16f,0.18f,0.28f}, // dim blue night (keeps buildings readable)
+        {0.42f,0.40f,0.42f},
+        {0.52f,0.53f,0.55f},
+        {0.60f,0.60f,0.63f},
+        {0.46f,0.36f,0.34f},
+        {0.16f,0.18f,0.28f},
+        {0.16f,0.18f,0.28f},
+    };
+    private static final float[] TOD_FOGD = { 0.014f, 0.020f, 0.011f, 0.006f, 0.022f, 0.015f, 0.014f };
+    private static final float[][] TOD_DIR = {
+        {-0.30f,-0.90f,-0.30f}, // night
+        {-0.85f,-0.28f, 0.20f}, // dawn: low from the east
+        {-0.60f,-0.55f, 0.10f}, // morning
+        {-0.10f,-0.98f,-0.10f}, // noon: nearly overhead
+        { 0.85f,-0.28f,-0.20f}, // evening: low from the west
+        { 0.30f,-0.90f, 0.30f}, // night
+        {-0.30f,-0.90f,-0.30f},
+    };
+
+    private void applyTimeOfDay(float clockMin) {
+        if (clockMin < 0) clockMin = 0;
+        if (clockMin > 1440) clockMin = clockMin % 1440;
+        int i = 0;
+        while (i < TOD_T.length - 2 && clockMin > TOD_T[i + 1]) i++;
+        float span = TOD_T[i + 1] - TOD_T[i];
+        float t = span > 0 ? (clockMin - TOD_T[i]) / span : 0f;
+        t = Math.max(0f, Math.min(1f, t));
+
+        ColorRGBA sky = mix(TOD_SKY, i, t);
+        ColorRGBA sunC = mix(TOD_SUN, i, t);
+        ColorRGBA ambC = mix(TOD_AMB, i, t);
+        float fogD = TOD_FOGD[i] + (TOD_FOGD[i + 1] - TOD_FOGD[i]) * t;
+        Vector3f dir = new Vector3f(
+                TOD_DIR[i][0] + (TOD_DIR[i + 1][0] - TOD_DIR[i][0]) * t,
+                TOD_DIR[i][1] + (TOD_DIR[i + 1][1] - TOD_DIR[i][1]) * t,
+                TOD_DIR[i][2] + (TOD_DIR[i + 1][2] - TOD_DIR[i][2]) * t).normalizeLocal();
+
+        viewPort.setBackgroundColor(sky);
+        if (fog != null) { fog.setFogColor(sky); fog.setFogDensity(fogD); }
+        if (sun != null) { sun.setColor(sunC.mult(1.25f)); sun.setDirection(dir); }
+        if (ambient != null) ambient.setColor(ambC);
+    }
+
+    private void knock() {
+        try { Runtime.getRuntime().exec(new String[]{"afplay", "/System/Library/Sounds/Tink.aiff"}); } catch (Exception ignored) {}
+    }
+
+    /** Human-readable description of where the player is, for NPC dialogue context. */
+    private String describeLocation(Vector3f p) {
+        float x = p.x, z = p.z;
+        if (x > -48 && x < -20 && z > 44 && z < 72) return dormFloor(p) ;
+        if (x > -31 && x < 31 && z > -70 && z < -42) {
+            int fl = Math.max(0, Math.round((p.y - 1.4f) / 4.25f));
+            return "the Academic Building (Class 1-D)" + (fl > 0 ? ", floor " + (fl + 1) : "");
+        }
+        if (x > 49 && x < 75 && z > -33 && z < -7) return "the School Cafeteria";
+        if (x > 49 && x < 75 && z > 15 && z < 45) return "the Gymnasium";
+        if (x > -75 && x < -49 && z > 9 && z < 35) return "the Memorial Library";
+        if (x > -83 && x < -41 && z > 79 && z < 105) return "the Aquatic Center";
+        if (x > 17 && x < 71 && z > 63 && z < 93) return "Keyaki Mall";
+        if (z > 85) return "the Main Gate";
+        return "the central campus plaza";
+    }
+
+    private String dormFloor(Vector3f p) {
+        int fl = Math.max(0, Math.round((p.y - 1.4f) / 3.2f));
+        return "the Dormitory" + (fl > 0 ? ", floor " + (fl + 1) + " (dorm rooms)" : " lobby");
+    }
+
+    private static ColorRGBA mix(float[][] table, int i, float t) {
+        return new ColorRGBA(
+                table[i][0] + (table[i + 1][0] - table[i][0]) * t,
+                table[i][1] + (table[i + 1][1] - table[i][1]) * t,
+                table[i][2] + (table[i + 1][2] - table[i][2]) * t, 1f);
     }
 }
