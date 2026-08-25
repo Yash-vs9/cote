@@ -42,6 +42,8 @@ public class Main extends SimpleApplication {
     private com.jme3.font.BitmapText interactionText;
     private com.jme3.font.BitmapText clockLabel;
     private NpcController npcController;
+    private MainMenuState menu;
+    private com.cote.client.story.StoryManager story;
 
     public static final java.util.List<InteractiveDoor> doors = new java.util.ArrayList<>();
     public static final java.util.List<InteractiveElevator> elevators = new java.util.ArrayList<>();
@@ -197,6 +199,18 @@ public class Main extends SimpleApplication {
 
         // Start near the dorms
         cam.setLocation(new Vector3f(-34f, 1.4f, 40f));
+
+        // 9. Title screen: choose Free Roam or Play Story before gameplay begins.
+        // The world above is fully live behind the dimmer; input stays locked until a mode is picked.
+        flyCam.setEnabled(false);
+        menu = new MainMenuState(this, playStory -> {
+            flyCam.setEnabled(true);
+            if (playStory) {
+                story = new com.cote.client.story.StoryManager(this, engine, npcController);
+                stateManager.attach(story); // script teleports the player to its opening scene
+            }
+        });
+        stateManager.attach(menu);
     }
 
     private boolean forward, backward, left, right, sprint;
@@ -219,6 +233,20 @@ public class Main extends SimpleApplication {
                 case "TimeEvening": engine.setClockMin(18 * 60); return;
                 case "TimeNight":   engine.setClockMin(22 * 60); return;
             }
+        }
+
+        // Title screen owns all input until a mode is chosen.
+        if (menu != null && menu.isEnabled()) {
+            forward = false; backward = false; left = false; right = false;
+            return;
+        }
+
+        // While the story presents a page/choice/quiz, movement keys are swallowed
+        // (E/1-4 are consumed by the story's own raw input listener).
+        boolean storyBlocking = story != null && story.isUiBlocking();
+        if (storyBlocking) {
+            forward = false; backward = false; left = false; right = false;
+            return;
         }
 
         // While the elevator panel is open, E closes it; all movement is locked.
@@ -319,8 +347,10 @@ public class Main extends SimpleApplication {
                     + "    [ / ] hour   F1-F4 morning/noon/evening/night");
         }
 
-        // Movement is locked during dialogue or while the elevator panel is open.
-        boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()));
+        // Movement is locked during dialogue, while the elevator panel is open,
+        // or while a story page/choice/quiz owns the screen.
+        boolean storyBlocking = story != null && story.isUiBlocking();
+        boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive())) || storyBlocking;
         if (!uiLock) {
             Vector3f pos = cam.getLocation();
             final float radius = 0.4f, playerHeight = 1.8f, eyeHeight = 1.4f, stepHeight = 0.6f;
@@ -460,7 +490,8 @@ public class Main extends SimpleApplication {
         for (InteractiveDoor d : doors) d.update(tpf);
         for (InteractiveElevator e : elevators) e.update(tpf, this);
         
-        if (hud != null && !hud.isDialogueActive() && !hud.isElevatorActive()) {
+        if (hud != null && !hud.isDialogueActive() && !hud.isElevatorActive()
+                && !(story != null && story.isUiBlocking())) {
             if (nearestNpc != null) {
                 hud.showPrompt(nearestNpc.getName());
             } else {

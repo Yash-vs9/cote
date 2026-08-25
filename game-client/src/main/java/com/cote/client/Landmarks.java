@@ -49,6 +49,8 @@ public class Landmarks {
                 "run laps around the outdoor soccer pitch", 100, 38));
         PLACES.add(new Place("tenniscourts", "Tennis Courts", "tennisCourt",
                 "play tennis on the four outdoor courts", 98, 8));
+        PLACES.add(new Place("store", "Convenience Store", "storeA",
+                "the campus convenience store for snacks and supplies", 34, 48));
     }
 
     public static Place byKey(String key) {

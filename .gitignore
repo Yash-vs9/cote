@@ -4,3 +4,6 @@ game-client/gemini.key
 npc_memory/
 game-client/npc_memory/
 target/
+
+# Story runtime save data
+story_save.properties
