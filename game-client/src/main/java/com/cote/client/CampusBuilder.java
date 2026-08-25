@@ -307,6 +307,12 @@ public class CampusBuilder {
         mat.setBoolean("UseMaterialColors", true);
         mat.setColor("Ambient", color);
         mat.setColor("Diffuse", color);
+        if (color.a < 1f) {
+            // Glass/water: real alpha blending instead of an ignored alpha channel.
+            mat.getAdditionalRenderState().setBlendMode(com.jme3.material.RenderState.BlendMode.Alpha);
+            mat.getAdditionalRenderState().setDepthWrite(false);
+            geom.setQueueBucket(RenderQueue.Bucket.Transparent);
+        }
         mat.setColor("Specular", new ColorRGBA(0.10f, 0.10f, 0.10f, 1f));
         mat.setFloat("Shininess", 6f);
         geom.setMaterial(mat);

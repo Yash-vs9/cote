@@ -42,6 +42,12 @@ public class AcademicBuildingBuilder {
         mat.setBoolean("UseMaterialColors", true);
         mat.setColor("Ambient", color);
         mat.setColor("Diffuse", color);
+        if (color.a < 1f) {
+            // Glass/water: real alpha blending instead of an ignored alpha channel.
+            mat.getAdditionalRenderState().setBlendMode(com.jme3.material.RenderState.BlendMode.Alpha);
+            mat.getAdditionalRenderState().setDepthWrite(false);
+            geom.setQueueBucket(RenderQueue.Bucket.Transparent);
+        }
         mat.setColor("Specular", new ColorRGBA(0.10f, 0.10f, 0.10f, 1f));
         mat.setFloat("Shininess", 6f);
         geom.setMaterial(mat);
@@ -125,15 +131,18 @@ public class AcademicBuildingBuilder {
             float y = FH * k;
 
             // ---------- Floor slabs ----------
-            if (k == 0 || k == STORIES) {
-                // Ground and roof: one solid slab (no stairwell hole).
+            if (k == 0) {
+                // Ground: one solid slab (no stairwell hole).
                 makeBox(60, 0.4f, 26, floorMat, 0, y, BZ, g, true);
             } else {
-                // Upper floors: main slab + service-core pieces, leaving a stairwell hole.
+                // Upper floors and roof: main slab + service-core pieces, leaving a stairwell hole.
                 makeBox(48, 0.4f, 26, floorMat, -6, y, BZ, g, true);            // Main (X -30..18)
                 makeBox(12, 0.4f, 15, floorMat, 24, y, BZ + 5.5f, g, true);     // Core-south (Z -58..-43)
-                makeBox(12, 0.4f, 5,  floorMat, 24, y, BZ - 10.5f, g, true);    // Core north landing (Z -69..-64)
-                // Stairwell hole = X 18..30, Z -64..-58 (void)
+                // North landing starts at Z -66.5, just past the top step's north face (-66.275):
+                // the whole flight stays inside the hole, so the slab never enters the player's
+                // head-clearance band mid-staircase and no step clips the slab.
+                makeBox(12, 0.4f, 2.5f, floorMat, 24, y, BZ - 11.75f, g, true); // Core north landing (Z -69..-66.5)
+                // Stairwell hole = X 18..30, Z -66.5..-58 (whole flight open overhead)
             }
 
             if (k < STORIES) {

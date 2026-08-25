@@ -34,6 +34,11 @@ public class HudUI extends BaseAppState {
     private BitmapText modeLabel;
     private NpcController npcController;      // set by Main, used to dispatch action commands
 
+    // Persistent chat log shown above the live exchange when a dialogue opens.
+    private BitmapText historyLabel;
+    // NPC currently frozen by an active dialogue (resume-on-exit safety contract).
+    private String frozenNpcId;
+
     public void setNpcController(NpcController c) { this.npcController = c; }
 
     // Elevator floor-button panel
@@ -72,6 +77,10 @@ public class HudUI extends BaseAppState {
             }
             if (!isDialogueActive || !evt.isPressed()) return;
 
+            if (evt.getKeyCode() == KeyInput.KEY_ESCAPE) {
+                closeDialogue();
+                return;
+            }
             if (evt.getKeyCode() == KeyInput.KEY_TAB) {
                 actionMode = !actionMode;   // switch between normal chat and action chat
                 updateModeLabel();
@@ -121,6 +130,10 @@ public class HudUI extends BaseAppState {
         modeLabel = new BitmapText(font);
         modeLabel.setSize(font.getCharSet().getRenderedSize() * 1.3f);
         modeLabel.setColor(new ColorRGBA(0.6f, 1f, 0.7f, 1f));
+
+        historyLabel = new BitmapText(font);
+        historyLabel.setSize(font.getCharSet().getRenderedSize() * 1.2f);
+        historyLabel.setColor(new ColorRGBA(0.75f, 0.78f, 0.82f, 1f));
 
         app.getInputManager().addRawInputListener(textInputListener);
     }
@@ -208,11 +221,17 @@ public class HudUI extends BaseAppState {
         sceneTime = time;
         hidePrompt();
         
+        // Freeze the NPC's schedule-driven movement for the duration of the chat.
+        frozenNpcId = npc.getId();
+        if (npcController != null) npcController.pauseNpc(frozenNpcId);
+
         float w = app.getCamera().getWidth();
         float h = app.getCamera().getHeight();
         
         npcNameLabel.setText(npc.getName());
         npcNameLabel.setLocalTranslation(w * 0.1f, h * 0.4f, 0);
+        
+        renderHistory(npc, w, h);
         
         npcResponseLabel.setText("...");
         npcResponseLabel.setLocalTranslation(w * 0.1f, h * 0.4f - 40, 0);
@@ -244,6 +263,38 @@ public class HudUI extends BaseAppState {
         }).start();
     }
     
+    /**
+     * Pre-populate the chat log with this NPC's persisted transcript (oldest -> newest,
+     * same last-12-turn window ConversationMemory.asTranscript uses) above the live box.
+     * First-ever conversations have no history file and simply render nothing.
+     */
+    private void renderHistory(NPC npc, float w, float h) {
+        java.util.List<String[]> hist = ConversationMemory.get(npc.getId());
+        int start = Math.max(0, hist.size() - 12);
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < hist.size(); i++) {
+            String[] t = hist.get(i);
+            sb.append("user".equals(t[0]) ? "Player: " : npc.getName() + ": ").append(t[1]).append("\n");
+        }
+        String text = sb.toString().trim();
+        historyLabel.setText(text);
+        if (text.isEmpty()) {          // first-ever chat: nothing to show
+            historyLabel.removeFromParent();
+            return;
+        }
+        int lines = text.split("\n", -1).length;
+        // Anchor the block's top edge so its bottom sits just above the name label.
+        float topY = h * 0.4f + 30f + lines * historyLabel.getLineHeight();
+        historyLabel.setLocalTranslation(w * 0.1f, topY, 0);
+        if (historyLabel.getParent() == null) app.getGuiNode().attachChild(historyLabel);
+    }
+
+    /** Single choke point for unfreezing: every dialogue exit must funnel through here or cleanup(). */
+    private void resumeFrozenNpc() {
+        if (frozenNpcId != null && npcController != null) npcController.resumeNpc(frozenNpcId);
+        frozenNpcId = null;
+    }
+
     public void closeDialogue() {
         if (!isDialogueActive) return;
         isDialogueActive = false;
@@ -253,6 +304,9 @@ public class HudUI extends BaseAppState {
         npcResponseLabel.removeFromParent();
         playerInputLabel.removeFromParent();
         modeLabel.removeFromParent();
+        historyLabel.removeFromParent();
+        stopSpeaking(); // don't keep talking after the conversation closes
+        resumeFrozenNpc(); // never leave the NPC permanently frozen
     }
 
     private void updateModeLabel() {
@@ -334,10 +388,19 @@ public class HudUI extends BaseAppState {
         return sb.toString();
     }
     
+    private Process sayProc;
+
     private void speak(String text) {
         try {
-            Runtime.getRuntime().exec(new String[]{"say", text});
+            if (sayProc != null && sayProc.isAlive()) sayProc.destroy(); // stop the previous line
+            sayProc = Runtime.getRuntime().exec(new String[]{"say", text});
         } catch (Exception e) {}
+    }
+
+    /** Silence any current/queued TTS (on dialogue close and app shutdown). */
+    public void stopSpeaking() {
+        try { if (sayProc != null) sayProc.destroyForcibly(); } catch (Exception ignored) {}
+        try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
     }
 
     public boolean isDialogueActive() { return isDialogueActive; }
@@ -368,7 +431,10 @@ public class HudUI extends BaseAppState {
     }
 
     @Override
-    protected void cleanup(Application app) { }
+    protected void cleanup(Application app) {
+        stopSpeaking();
+        resumeFrozenNpc(); // app shutdown mid-dialogue must not leave the NPC frozen
+    }
 
     @Override
     protected void onEnable() { }

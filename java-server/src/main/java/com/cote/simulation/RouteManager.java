@@ -6,6 +6,7 @@ public class RouteManager {
     private final Map<String, double[]> nodes;
     private final Map<String, List<String>> adjacency = new HashMap<>();
     private final TrafficManager trafficManager;
+    private final Map<String, List<String>> activeRoutes = new HashMap<>();
 
     public RouteManager(TrafficManager tm) {
         this.nodes = CampusGraph.NODES;
@@ -49,38 +50,49 @@ public class RouteManager {
         return false;
     }
 
+    /** Dijkstra over real edge distances; returns null when the target is unreachable. */
     private List<String> shortestPath(String from, String to, Set<String> bannedEdges) {
-        Queue<List<String>> queue = new LinkedList<>();
-        Set<String> visited = new HashSet<>();
-        queue.add(Collections.singletonList(from));
+        Map<String, Double> dist = new HashMap<>();
+        Map<String, String> prev = new HashMap<>();
+        Set<String> settled = new HashSet<>();
+        PriorityQueue<String> frontier =
+                new PriorityQueue<>(Comparator.comparingDouble(dist::get));
+        dist.put(from, 0.0);
+        frontier.add(from);
 
-        while (!queue.isEmpty()) {
-            List<String> path = queue.poll();
-            String cur = path.get(path.size() - 1);
-            if (cur.equals(to)) return path;
-            if (visited.contains(cur) && path.size() > 6) continue;
-            visited.add(cur);
-
+        while (!frontier.isEmpty()) {
+            String cur = frontier.poll();
+            if (!settled.add(cur)) continue;
+            if (cur.equals(to)) break;
+            double dCur = dist.get(cur);
             for (String neighbor : adjacency.getOrDefault(cur, Collections.emptyList())) {
-                if (path.contains(neighbor)) continue;
                 String ek = TrafficManager.edgeKey(cur, neighbor);
                 if (bannedEdges.contains(ek)) continue;
-                List<String> nextPath = new ArrayList<>(path);
-                nextPath.add(neighbor);
-                queue.add(nextPath);
+                double nd = dCur + segmentDistance(cur, neighbor);
+                if (nd < dist.getOrDefault(neighbor, Double.MAX_VALUE)) {
+                    dist.put(neighbor, nd);
+                    prev.put(neighbor, cur);
+                    frontier.add(neighbor);
+                }
             }
         }
-        return null;
+
+        if (!dist.containsKey(to)) return null;
+        LinkedList<String> path = new LinkedList<>();
+        for (String at = to; at != null; at = prev.get(at)) path.addFirst(at);
+        return path;
+    }
+
+    private double segmentDistance(String a, String b) {
+        double[] pa = nodes.get(a);
+        double[] pb = nodes.get(b);
+        return (pa == null || pb == null) ? 0 : Math.hypot(pa[0] - pb[0], pa[1] - pb[1]);
     }
 
     public double pathDistance(List<String> nodeKeys) {
         double d = 0;
         for (int i = 0; i < nodeKeys.size() - 1; i++) {
-            double[] a = nodes.get(nodeKeys.get(i));
-            double[] b = nodes.get(nodeKeys.get(i + 1));
-            if (a != null && b != null) {
-                d += Math.hypot(a[0] - b[0], a[1] - b[1]);
-            }
+            d += segmentDistance(nodeKeys.get(i), nodeKeys.get(i + 1));
         }
         return d;
     }
@@ -99,32 +111,43 @@ public class RouteManager {
 
     public RouteSelectionResult selectBestRoute(String fromNode, String toNode, String npcId) {
         List<List<String>> candidates = findCandidateRoutes(fromNode, toNode);
+        String key = npcId == null ? "npc" : npcId;
+        List<String> chosen;
+        String routeId;
+
         if (candidates.size() == 1) {
-            return new RouteSelectionResult(candidates.get(0), "ROUTE_PRIMARY_DIRECT", candidates);
-        }
+            chosen = candidates.get(0);
+            routeId = "ROUTE_PRIMARY_DIRECT";
+        } else {
+            double bestScore = Double.MAX_VALUE;
+            List<String> bestRoute = candidates.get(0);
+            int bestIdx = 0;
 
-        double bestScore = Double.MAX_VALUE;
-        List<String> bestRoute = candidates.get(0);
-        int bestIdx = 0;
+            int hash = Math.abs(key.hashCode());
+            double seedOffset = ((hash % 5) - 2) * 1.6;
 
-        int hash = Math.abs((npcId == null ? "npc" : npcId).hashCode());
-        double seedOffset = ((hash % 5) - 2) * 1.6;
+            for (int i = 0; i < candidates.size(); i++) {
+                List<String> cand = candidates.get(i);
+                double dist = pathDistance(cand);
+                double traffic = trafficManager.getRouteTrafficCost(cand);
+                double score = dist + traffic + (i == (hash % candidates.size()) ? -2.2 : seedOffset);
 
-        for (int i = 0; i < candidates.size(); i++) {
-            List<String> cand = candidates.get(i);
-            double dist = pathDistance(cand);
-            double traffic = trafficManager.getRouteTrafficCost(cand);
-            double score = dist + traffic + (i == (hash % candidates.size()) ? -2.2 : seedOffset);
-
-            if (score < bestScore) {
-                bestScore = score;
-                bestRoute = cand;
-                bestIdx = i;
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestRoute = cand;
+                    bestIdx = i;
+                }
             }
+
+            char routeLetter = (char) ('A' + bestIdx);
+            routeId = String.format("ROUTE_%c_%dND", routeLetter, bestRoute.size());
+            chosen = bestRoute;
         }
 
-        char routeLetter = (char) ('A' + bestIdx);
-        String routeId = String.format("ROUTE_%c_%dND", routeLetter, bestRoute.size());
-        return new RouteSelectionResult(bestRoute, routeId, candidates);
+        // Live traffic bookkeeping: free the NPC's previous edges, load the new ones, so
+        // repeat selections spread across alternate routes.
+        List<String> previous = activeRoutes.put(key, chosen);
+        trafficManager.replaceRouteTraffic(npcId, previous, chosen);
+        return new RouteSelectionResult(chosen, routeId, candidates);
     }
 }

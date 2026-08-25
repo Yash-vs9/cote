@@ -36,6 +36,12 @@ public class TrafficManager {
         }
     }
 
+    public synchronized void replaceRouteTraffic(String npcId, List<String> oldNodes, List<String> newNodes) {
+        if (oldNodes != null && oldNodes.equals(newNodes)) return;
+        removeRouteTraffic(npcId, oldNodes);
+        addRouteTraffic(npcId, newNodes);
+    }
+
     public synchronized double getRouteTrafficCost(List<String> nodeKeys) {
         if (nodeKeys == null || nodeKeys.size() < 2) return 0.0;
         double cost = 0.0;

@@ -45,6 +45,10 @@ public class Landmarks {
                 "the school entrance / leave campus", 0, 95));
         PLACES.add(new Place("plaza", "Central Plaza", "courtyard",
                 "the fountain courtyard in the campus centre", 0, 30));
+        PLACES.add(new Place("track", "Running Track", "sportsField",
+                "run laps around the outdoor soccer pitch", 100, 38));
+        PLACES.add(new Place("tenniscourts", "Tennis Courts", "tennisCourt",
+                "play tennis on the four outdoor courts", 98, 8));
     }
 
     public static Place byKey(String key) {

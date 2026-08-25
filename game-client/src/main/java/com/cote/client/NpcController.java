@@ -2,12 +2,15 @@ package com.cote.client;
 
 import com.cote.simulation.CampusGraph;
 import com.cote.simulation.NPC;
+import com.cote.simulation.ReservationManager;
 import com.cote.simulation.RouteManager;
 import com.cote.simulation.SimulationEngine;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Drives NPC movement using the simulation's brain (schedule + personality +
@@ -25,11 +28,20 @@ public class NpcController {
     private static final double DORM_FH = 3.2;      // dorm floor height
     private static final double LIFT_SPEED = 4.0;   // m/s vertical
 
+    // --- Smooth ground-travel tuning ---------------------------------------
+    private static final float LOOKAHEAD = 1.6f;            // pure-pursuit aim distance along route (m)
+    private static final float PASS_RADIUS = 0.9f;          // waypoint pass-through radius (m)
+    private static final float PASS_RADIUS_SPEED_T = 0.30f; // radius grows with speed: speed * this
+    private static final float MAX_YAW_SPEED = 3.5f;        // rad/s cap on facing changes (ground phase)
+    private static final double STUCK_SURRENDER_SECS = 0.5; // wedged-waypoint give-up time (unchanged)
+    private static final double TWO_PI = Math.PI * 2.0;
+
     // Phases of a journey.
-    private static final int GROUND = 0, ASCEND = 1, ROOM = 2, DESCEND_WALK = 3, DESCEND = 4, ARRIVED = 5;
+    private static final int GROUND = 0, ASCEND = 1, ROOM = 2, DESCEND_WALK = 3, DESCEND = 4, ARRIVED = 5, SEAT = 6;
 
     private final SimulationEngine engine;
     private final RouteManager routes;
+    private final ReservationManager reservations;
 
     private static class Nav {
         String currentNode;
@@ -46,15 +58,19 @@ public class NpcController {
         // Player-issued action command (overrides the schedule until reached).
         String override;      // node key to route to
         String overrideName;  // place display name for the arrival report
+        double stuckTimer;    // time spent unable to advance (wall-blocked)
+        ReservationManager.Spot spot; // reserved seat to settle into after graph arrival
     }
 
     private final Map<String, Nav> navs = new HashMap<>();
     private final Map<String, double[]> dormRoom = new HashMap<>(); // id -> {roomX, roomZ, roomY}
     private final Map<String, String> arrivalReports = new HashMap<>(); // id -> place name just reached
+    private final Set<String> paused = new HashSet<>(); // ids frozen via pauseNpc()
 
     public NpcController(SimulationEngine engine) {
         this.engine = engine;
         this.routes = engine.getRouteManager();
+        this.reservations = engine.getReservationManager();
         // Assign each student a dorm room on floors 2..N (x cycles across 3 rooms).
         double[] roomXs = { -42, -34, -26 };
         int floor = 2;
@@ -90,16 +106,37 @@ public class NpcController {
         return arrivalReports.remove(npcId);
     }
 
+    /** Freeze an NPC exactly where it is: no stepping, no separation; route/state kept intact. */
+    public void pauseNpc(String id) {
+        if (id != null) paused.add(id);
+    }
+
+    /** Un-freeze a paused NPC; it resumes its journey from where it stopped. */
+    public void resumeNpc(String id) {
+        if (id != null) paused.remove(id);
+    }
+
+    /** True while the NPC is freeze-framed by pauseNpc() (unknown ids are never paused). */
+    public boolean isPaused(String id) {
+        return id != null && paused.contains(id);
+    }
+
     /** True while the NPC is up in their dorm room (used for the knock-to-enter gate). */
     public boolean isHomeAsleep(String id) {
         Nav n = navs.get(id);
         return n != null && n.destIsDorm && n.phase == ARRIVED && n.y > 1.0;
     }
 
+    /** True when the NPC finished its journey and is idling at its destination. */
+    public boolean isArrived(String id) {
+        Nav n = navs.get(id);
+        return n != null && n.phase == ARRIVED;
+    }
+
     public void update(float tpf) {
         for (NPC npc : engine.getNpcs()) {
             Nav nav = navs.get(npc.getId());
-            if (nav == null) continue;
+            if (nav == null || paused.contains(npc.getId())) continue; // frozen: hold pose
 
             // A player command overrides the schedule; otherwise follow the daily routine.
             String desired = (nav.override != null) ? nav.override : destinationFor(npc);
@@ -125,6 +162,7 @@ public class NpcController {
                 case GROUND:       stepGround(npc, nav, tpf); break;
                 case ASCEND:       stepAscend(npc, nav, tpf); break;
                 case ROOM:         stepRoom(npc, nav, tpf); break;
+                case SEAT:         stepSeat(npc, nav, tpf); break;
                 default: /* ARRIVED: idle */ break;
             }
 
@@ -137,6 +175,34 @@ public class NpcController {
                 nav.destKey = null;
             }
         }
+
+        separate(tpf);
+    }
+
+    /** Pairwise repulsion: keep NPCs closer than 1.1m apart so they never stack on shared nodes. */
+    private void separate(float tpf) {
+        List<NPC> npcs = engine.getNpcs();
+        for (int i = 0; i < npcs.size(); i++) {
+            NPC a = npcs.get(i);
+            Nav na = navs.get(a.getId());
+            if (na == null || na.phase == ASCEND || na.phase == DESCEND
+                    || paused.contains(a.getId())) continue;
+            for (int j = i + 1; j < npcs.size(); j++) {
+                NPC b = npcs.get(j);
+                Nav nb = navs.get(b.getId());
+                if (nb == null || nb.phase == ASCEND || nb.phase == DESCEND
+                    || paused.contains(b.getId())) continue;
+                if (Math.abs(na.y - nb.y) > 0.5) continue; // different floors never repel
+                double dx = b.getX() - a.getX(), dz = b.getZ() - a.getZ();
+                double d2 = dx * dx + dz * dz;
+                if (d2 >= 1.1 * 1.1 || d2 < 1e-6) continue;
+                double d = Math.sqrt(d2);
+                double push = Math.min(0.8 * tpf, (1.1 - d) * 0.5);
+                double ux = dx / d, uz = dz / d;
+                a.setX(a.getX() - ux * push); a.setZ(a.getZ() - uz * push);
+                b.setX(b.getX() + ux * push); b.setZ(b.getZ() + uz * push);
+            }
+        }
     }
 
     private void resolveTarget(NPC npc, Nav nav, String desired) {
@@ -145,6 +211,7 @@ public class NpcController {
             nav.destIsDorm = true;
             nav.approachNode = "dorm";
             nav.roomX = r[0]; nav.roomZ = r[1]; nav.roomY = r[2];
+            nav.spot = null;
         } else {
             nav.destIsDorm = false;
             nav.approachNode = "DORMROOM".equals(desired) ? "dorm" : desired;
@@ -152,6 +219,22 @@ public class NpcController {
             nav.roomX = c != null ? c[0] : npc.getX();
             nav.roomZ = c != null ? c[1] : npc.getZ();
             nav.roomY = 0;
+            // Seat-level arrival: settle onto the exact reserved spot (desk/cafeteria/library seat).
+            // Guarded by building match so a stale targetSpotId never drags the NPC across campus.
+            String spotLoc = spotLocFor(nav.approachNode);
+            ReservationManager.Spot s = (spotLoc == null || npc.getTargetSpotId() == null)
+                    ? null : reservations.getSpot(npc.getTargetSpotId());
+            nav.spot = (s != null && s.loc.equals(spotLoc)) ? s : null;
+        }
+    }
+
+    /** Which ReservationManager location string an interior destination node maps to, or null. */
+    private String spotLocFor(String approachNode) {
+        switch (approachNode) {
+            case "classroom":   return "class1d";
+            case "cafInterior": return "cafeteria";
+            case "libInterior": return "library";
+            default: return null;
         }
     }
 
@@ -166,16 +249,92 @@ public class NpcController {
 
     private void stepGround(NPC npc, Nav nav, float tpf) {
         if (nav.route == null || nav.idx >= nav.route.size()) {
-            nav.phase = nav.destIsDorm ? ASCEND : ARRIVED;
+            arriveAfterRoute(nav);
             return;
         }
-        double[] target = CampusGraph.NODES.get(nav.route.get(nav.idx));
-        if (target == null) { nav.idx++; return; }
-        if (moveXZ(npc, target[0], target[1], tpf)) {
-            nav.currentNode = nav.route.get(nav.idx);
-            npc.setCurrentSpot(nav.currentNode);
-            nav.idx++;
-            if (nav.idx >= nav.route.size()) nav.phase = nav.destIsDorm ? ASCEND : ARRIVED;
+        double[] node = CampusGraph.NODES.get(nav.route.get(nav.idx));
+        if (node == null) { nav.idx++; return; }
+
+        double r = PASS_RADIUS + npc.getSpeed() * PASS_RADIUS_SPEED_T;
+        double dxw = node[0] - npc.getX(), dzw = node[1] - npc.getZ();
+        if (dxw * dxw + dzw * dzw < r * r) {
+            nav.stuckTimer = 0;
+            advanceToNextNode(npc, nav);
+            return;
+        }
+
+        // Outdoor / building-entry travel respects walls; the pursuit point is wall-tested so
+        // doorway threading still funnels NPCs through gaps when corner-cutting would clip a wall.
+        double[] aim = pursuitPoint(npc, nav);
+        if (collidesAt(aim[0], aim[1], nav.y)) { aim[0] = node[0]; aim[1] = node[1]; }
+
+        if (moveXZColliding(npc, nav, aim[0], aim[1], tpf, false)) {
+            nav.stuckTimer = 0;
+            advanceToNextNode(npc, nav);
+        }
+    }
+
+    /** Mark route[idx] visited and step to the next waypoint (arriving if that was the last). */
+    private void advanceToNextNode(NPC npc, Nav nav) {
+        nav.currentNode = nav.route.get(nav.idx);
+        npc.setCurrentSpot(nav.currentNode);
+        nav.idx++;
+        if (nav.idx >= nav.route.size()) arriveAfterRoute(nav);
+    }
+
+    /**
+     * Pure-pursuit aim point: project onto the current segment (route[idx-1] -> route[idx]),
+     * then walk LOOKAHEAD metres forward along the polyline. When the lookahead reaches past
+     * the current node it lands on the NEXT segment, so steering naturally cuts the corner.
+     */
+    private double[] pursuitPoint(NPC npc, Nav nav) {
+        double[] node = CampusGraph.NODES.get(nav.route.get(nav.idx));
+        double ax, az;
+        if (nav.idx > 0) {
+            double[] prev = CampusGraph.NODES.get(nav.route.get(nav.idx - 1));
+            if (prev != null) { ax = prev[0]; az = prev[1]; } else { ax = node[0]; az = node[1]; }
+        } else { ax = npc.getX(); az = npc.getZ(); }
+
+        double abx = node[0] - ax, abz = node[1] - az;
+        double abLen2 = abx * abx + abz * abz;
+        if (abLen2 < 1e-9) return new double[]{ node[0], node[1] };
+
+        double t = ((npc.getX() - ax) * abx + (npc.getZ() - az) * abz) / abLen2;
+        t = Math.max(0.0, Math.min(1.0, t));
+        double cx = ax + abx * t, cz = az + abz * t;
+
+        double remain = LOOKAHEAD;
+        int i = nav.idx;
+        while (i < nav.route.size()) {
+            double[] n2 = CampusGraph.NODES.get(nav.route.get(i));
+            if (n2 == null) break;
+            double sx = n2[0] - cx, sz = n2[1] - cz;
+            double sl = Math.sqrt(sx * sx + sz * sz);
+            if (sl >= remain && sl > 1e-9) {
+                return new double[]{ cx + sx / sl * remain, cz + sz / sl * remain };
+            }
+            remain -= Math.max(sl, 0.0);
+            cx = n2[0]; cz = n2[1];
+            i++;
+        }
+        return new double[]{ cx, cz };
+    }
+
+    /** Graph route done: head for the reserved seat's exact micro-position, else arrive. */
+    private void arriveAfterRoute(Nav nav) {
+        if (!nav.destIsDorm && nav.spot != null) {
+            nav.phase = SEAT;
+            return;
+        }
+        nav.phase = nav.destIsDorm ? ASCEND : ARRIVED;
+    }
+
+    private void stepSeat(NPC npc, Nav nav, float tpf) {
+        ReservationManager.Spot s = nav.spot;
+        if (s == null) { nav.phase = ARRIVED; return; }
+        if (moveXZColliding(npc, nav, s.x, s.z, tpf, true)) {
+            npc.setFacing(s.facing); // sit aligned with the spot's reserved facing
+            nav.phase = ARRIVED;
         }
     }
 
@@ -186,7 +345,10 @@ public class NpcController {
     }
 
     private void stepRoom(NPC npc, Nav nav, float tpf) {
-        if (moveXZ(npc, nav.roomX, nav.roomZ, tpf)) nav.phase = ARRIVED;
+        if (moveXZ(npc, nav.roomX, nav.roomZ, tpf)) {
+            if (nav.spot != null) nav.phase = SEAT;
+            else nav.phase = ARRIVED;
+        }
     }
 
     private void stepDescendWalk(NPC npc, Nav nav, float tpf) {
@@ -204,7 +366,7 @@ public class NpcController {
         }
     }
 
-    /** Move the NPC toward (tx,tz); returns true when it arrives. Updates facing. */
+    /** Move the NPC toward (tx,tz); returns true when it arrives. Updates facing. (No wall test — indoor/vertical use.) */
     private boolean moveXZ(NPC npc, double tx, double tz, float tpf) {
         double dx = tx - npc.getX(), dz = tz - npc.getZ();
         double dist = Math.hypot(dx, dz);
@@ -213,6 +375,77 @@ public class NpcController {
         npc.setX(npc.getX() + dx / dist * step);
         npc.setZ(npc.getZ() + dz / dist * step);
         npc.setFacing(Math.atan2(dx, dz));
+        return false;
+    }
+
+    /** Wall-aware move toward (tx,tz): slides along blocked axes so NPCs can't pass through walls,
+     *  only through door gaps. If fully wedged for a moment, gives up on this waypoint so it never freezes.
+     *  snapOnArrive: teleport onto (tx,tz) when arrived (SEAT/indoor precision); false lets GROUND
+     *  pass through waypoints without snapping. Facing is rate-limited during GROUND, instant otherwise. */
+    private boolean moveXZColliding(NPC npc, Nav nav, double tx, double tz, float tpf, boolean snapOnArrive) {
+        double x = npc.getX(), z = npc.getZ();
+        double dx = tx - x, dz = tz - z;
+        double dist = Math.hypot(dx, dz);
+        double step = npc.getSpeed() * tpf;
+        if (dist <= step || dist < 0.05) {
+            if (snapOnArrive) { npc.setX(tx); npc.setZ(tz); }
+            nav.stuckTimer = 0;
+            return true;
+        }
+
+        double ux = dx / dist, uz = dz / dist;
+
+        // If the NPC is ALREADY overlapping walls (spawned inside a building, threading an
+        // interior, or grazing a corner), don't fight it — move freely so it can never get
+        // trapped. Wall-blocking only applies when walking from open space INTO a wall.
+        if (collidesAt(x, z, nav.y)) {
+            npc.setX(x + ux * step); npc.setZ(z + uz * step);
+            applyFacing(npc, nav, dx, dz, tpf);
+            nav.stuckTimer = 0;
+            return false;
+        }
+
+        double nx = x + ux * step, nz = z + uz * step;
+        boolean blockedX = collidesAt(nx, z, nav.y);
+        boolean blockedZ = collidesAt(x, nz, nav.y);
+
+        boolean moved = false;
+        if (!blockedX && !blockedZ)      { npc.setX(nx); npc.setZ(nz); moved = true; }
+        else if (!blockedX)              { npc.setX(nx); moved = true; } // slide along X
+        else if (!blockedZ)              { npc.setZ(nz); moved = true; } // slide along Z
+
+        if (moved) {
+            applyFacing(npc, nav, dx, dz, tpf);
+            nav.stuckTimer = 0;
+            return false;
+        }
+        // Wedged (both axes blocked): give up this waypoint quickly so it never freezes.
+        nav.stuckTimer += tpf;
+        if (nav.stuckTimer > STUCK_SURRENDER_SECS) { nav.stuckTimer = 0; return true; }
+        return false;
+    }
+
+    /** Ease facing toward the aim heading during GROUND travel (capped at MAX_YAW_SPEED rad/s,
+     *  delta wrapped to [-pi, pi]); instant elsewhere so SEAT/indoor behavior is unchanged. */
+    private void applyFacing(NPC npc, Nav nav, double dx, double dz, float tpf) {
+        double yaw = Math.atan2(dx, dz);
+        if (nav.phase != GROUND) { npc.setFacing(yaw); return; }
+        float cur = (float) npc.getFacing();
+        double delta = (yaw - cur) % TWO_PI;
+        if (delta > Math.PI) delta -= TWO_PI;
+        else if (delta < -Math.PI) delta += TWO_PI;
+        double maxTurn = MAX_YAW_SPEED * tpf;
+        if (delta > maxTurn) delta = maxTurn;
+        else if (delta < -maxTurn) delta = -maxTurn;
+        npc.setFacing(cur + delta);
+    }
+
+    /** True if a person-sized box at (x, y, z) overlaps any campus wall collider. */
+    private boolean collidesAt(double x, double z, double y) {
+        float px = (float) x, pz = (float) z, py = (float) y + 0.2f;
+        for (CampusBuilder.AABB a : CampusBuilder.colliders) {
+            if (a.intersects(px, py, pz, 0.35f, 1.4f)) return true;
+        }
         return false;
     }
 

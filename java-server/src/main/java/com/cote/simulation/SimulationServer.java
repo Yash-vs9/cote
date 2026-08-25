@@ -91,7 +91,7 @@ public class SimulationServer {
                 String query = exchange.getRequestURI().getQuery();
                 Map<String, String> params = parseQuery(query);
                 String from = params.getOrDefault("from", "gateN");
-                String to = params.getOrDefault("to", "classDoor");
+                String to = params.getOrDefault("to", "classroom");
                 String npcId = params.getOrDefault("npcId", "student");
 
                 RouteManager.RouteSelectionResult res = engine.getRouteManager().selectBestRoute(from, to, npcId);
@@ -166,7 +166,7 @@ public class SimulationServer {
         System.out.println("🚀 COTE Java Simulation Server Started on port " + server.getAddress().getPort());
         System.out.println("   Health check: http://localhost:" + server.getAddress().getPort() + "/api/health");
         System.out.println("   Live Sim API: http://localhost:" + server.getAddress().getPort() + "/api/simulation");
-        System.out.println("   Route Solver: http://localhost:" + server.getAddress().getPort() + "/api/route?from=gateN&to=classDoor");
+        System.out.println("   Route Solver: http://localhost:" + server.getAddress().getPort() + "/api/route?from=gateN&to=classroom");
         System.out.println("=================================================");
     }
 

@@ -19,6 +19,7 @@ public class Main extends SimpleApplication {
         settings.setTitle("Advanced Nurturing High School - Java Edition");
         settings.setResolution(1280, 720);
         settings.setVSync(true);
+        settings.setSamples(4); // hardware MSAA
         app.setSettings(settings);
         app.setShowSettings(false); // Skip settings dialog
         app.start();
@@ -27,6 +28,15 @@ public class Main extends SimpleApplication {
     private DirectionalLight sun;
     private AmbientLight ambient;
     private com.jme3.post.filters.FogFilter fog;
+    private com.jme3.post.filters.ToneMapFilter toneMap;
+    private com.jme3.scene.Geometry sunDisc;
+
+    // Distance the sun disc is kept ahead of the camera along the inverted sun direction.
+    // 160 sits well above the tallest building (~48m) yet close enough that the FogFilter's
+    // exp^2 falloff doesn't fully erase it at daytime densities (dawn/dusk haze hides it naturally).
+    private static final float SUN_DISC_DIST = 160f;
+    // Filmic tone map reference white from Common/MatDefs/Post/ToneMap.frag ("should be 11.2").
+    private static final float TONE_WHITE_POINT = 11.2f;
 
     private float interactionCooldown = 0f;
     private com.jme3.font.BitmapText interactionText;
@@ -36,15 +46,31 @@ public class Main extends SimpleApplication {
     public static final java.util.List<InteractiveDoor> doors = new java.util.ArrayList<>();
     public static final java.util.List<InteractiveElevator> elevators = new java.util.ArrayList<>();
     @Override
+    public void destroy() {
+        try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
+        super.destroy();
+    }
+
+    @Override
     public void simpleInitApp() {
+        // Safety net: kill any lingering TTS if the JVM is shut down abruptly.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
+        }));
+
         // Setup camera and movement speed
         flyCam.setMoveSpeed(15f);
         cam.setLocation(new Vector3f(0, 1.5f, 5));
+        setDisplayFps(true);
+        setDisplayStatView(true);
 
         // Create the campus environment
         CampusBuilder builder = new CampusBuilder(assetManager);
         builder.buildAll();
         rootNode.attachChild(builder.rootNode);
+
+        // Outdoor Sports Complex: tennis courts + running track/soccer pitch east of the gymnasium.
+        new SportsComplexBuilder(assetManager, rootNode).build();
         
         // Setup lighting
         sun = new DirectionalLight();
@@ -62,8 +88,6 @@ public class Main extends SimpleApplication {
         fill.setColor(new ColorRGBA(0.42f, 0.48f, 0.58f, 1.0f));
         rootNode.addLight(fill);
 
-        viewPort.setBackgroundColor(new ColorRGBA(0.5f, 0.7f, 0.9f, 1.0f));
-        
         initCrossHairs();
 
         
@@ -75,11 +99,22 @@ public class Main extends SimpleApplication {
         dlsr.setLight(sun);
         dlsr.setEdgeFilteringMode(com.jme3.shadow.EdgeFilteringMode.PCFPOISSON);
         dlsr.setShadowIntensity(0.45f); // softer, not pitch-black shadows
+        dlsr.setLambda(0.55f);          // tighter split distribution: more texel density near the camera
+        dlsr.setShadowZExtend(250f);    // cap shadow distance so cascades cover the playable area
+        dlsr.setEdgesThickness(2);
         viewPort.addProcessor(dlsr);
 
         // Ambient occlusion adds contact shadows/depth to the flat boxy geometry.
         com.jme3.post.ssao.SSAOFilter ssao = new com.jme3.post.ssao.SSAOFilter(4.0f, 1.3f, 0.28f, 0.10f);
         fpp.addFilter(ssao);
+
+        // Subtle bloom. Kept BEFORE the fog pass so bright sources are extracted before haze flattens them.
+        // ExposureCutOff zeroes every pixel whose average channel is below 0.85, so only near-white
+        // emissive surfaces (the sun disc) feed the glow; sky (~0.75 luma at noon) stays clean.
+        com.jme3.post.filters.BloomFilter bloom = new com.jme3.post.filters.BloomFilter();
+        bloom.setBloomIntensity(0.45f);
+        bloom.setExposureCutOff(0.85f);
+        fpp.addFilter(bloom);
 
         fog = new com.jme3.post.filters.FogFilter();
         fog.setFogColor(new ColorRGBA(0.62f, 0.76f, 0.88f, 1.0f));
@@ -87,13 +122,26 @@ public class Main extends SimpleApplication {
         fog.setFogDensity(0.015f);
         fpp.addFilter(fog);
 
+        // Tone mapping (filmic). Exposure is driven per-frame from applyTimeOfDay via the white point.
+        toneMap = new com.jme3.post.filters.ToneMapFilter();
+        toneMap.setWhitePoint(new Vector3f(TONE_WHITE_POINT, TONE_WHITE_POINT, TONE_WHITE_POINT));
+        fpp.addFilter(toneMap);
+
         // Anti-aliasing for crisp edges.
         fpp.addFilter(new com.jme3.post.filters.FXAAFilter());
 
         viewPort.addProcessor(fpp);
 
-        // 4. Setup Sky background color
+        // Setup Sky background color
         viewPort.setBackgroundColor(new ColorRGBA(0.62f, 0.76f, 0.88f, 1.0f)); // 0x9fc3e0
+
+        // Emissive-looking sun disc (bloom source). Never casts/receives shadows; positioned each frame.
+        sunDisc = new com.jme3.scene.Geometry("SunDisc", new com.jme3.scene.shape.Sphere(12, 16, 8f));
+        Material sunMat = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+        sunMat.setColor("Color", ColorRGBA.White);
+        sunDisc.setMaterial(sunMat);
+        sunDisc.setShadowMode(com.jme3.renderer.queue.RenderQueue.ShadowMode.Off);
+        rootNode.attachChild(sunDisc);
 
         // 5. Setup basic Ground
         Box groundBox = new Box(50f, 0.1f, 50f);
@@ -154,6 +202,7 @@ public class Main extends SimpleApplication {
     private boolean forward, backward, left, right, sprint;
     private com.cote.simulation.SimulationEngine engine;
     private java.util.Map<String, Rig> npcRigs = new java.util.HashMap<>();
+    private java.util.Map<String, Float> moveBlends = new java.util.HashMap<>();
     private float time = 0;
     
     private HudUI hud;
@@ -239,7 +288,7 @@ public class Main extends SimpleApplication {
     
 
     private void initCrossHairs() {
-        guiNode.detachAllChildren();
+        // Do NOT detachAllChildren here: that wiped the default FPS/statistics overlay.
         guiFont = assetManager.loadFont("Interface/Fonts/Default.fnt");
         com.jme3.font.BitmapText ch = new com.jme3.font.BitmapText(guiFont, false);
         ch.setSize(guiFont.getCharSet().getRenderedSize() * 2);
@@ -357,22 +406,41 @@ public class Main extends SimpleApplication {
             float targetY = npcController.getY(npc.getId());
             Vector3f currentPos = rig.root.getLocalTranslation();
 
-            boolean isMoving = false;
+            // Motion is derived from actual per-frame displacement of the server state.
             float dx = targetX - currentPos.x, dz = targetZ - currentPos.z;
-            if (dx * dx + dz * dz > 0.0004f) { // >2cm: actually walking
-                isMoving = true;
+            float dispSq = dx * dx + dz * dz;
+            boolean isMoving = dispSq > 0.0004f; // >2cm: actually walking
+            if (isMoving) {
                 currentPos.x += dx * Math.min(1.0f, tpf * 10f);
                 currentPos.z += dz * Math.min(1.0f, tpf * 10f);
             }
             currentPos.y += (targetY - currentPos.y) * Math.min(1.0f, tpf * 6f); // ride lift vertically
             rig.root.setLocalTranslation(currentPos);
-            
-            com.jme3.math.Quaternion targetRot = new com.jme3.math.Quaternion().fromAngles(0, (float) npc.getFacing(), 0);
+
+            // Walk/run blend: ~0.15s attack while moving, ~0.15s release when idle.
+            float blend = moveBlends.getOrDefault(npc.getId(), 0f);
+            blend = isMoving ? Math.min(1f, blend + tpf / 0.15f)
+                             : Math.max(0f, blend - tpf / 0.15f);
+            moveBlends.put(npc.getId(), blend);
+            float speed = isMoving ? (float) Math.sqrt(dispSq) / Math.max(tpf, 1e-4f) : 0f;
+            rig.animate(time, tpf, blend, speed);
+
+            // Idle at the destination: turn toward the player standing close by.
+            float pdx = playerPos.x - currentPos.x, pdz = playerPos.z - currentPos.z;
+            boolean facePlayer = npcController.isArrived(npc.getId()) && pdx * pdx + pdz * pdz < 9f;
+
             com.jme3.math.Quaternion curRot = rig.root.getLocalRotation().clone();
-            curRot.slerp(targetRot, Math.min(1.0f, tpf * 8f));
+            if (facePlayer) {
+                // Yaw convention matches NPC facing: atan2(dx, dz) radians about +Y (0 faces +Z).
+                com.jme3.math.Quaternion targetRot =
+                        new com.jme3.math.Quaternion().fromAngles(0, (float) Math.atan2(pdx, pdz), 0);
+                curRot.slerp(targetRot, Math.min(1.0f, tpf * 4f));
+            } else {
+                com.jme3.math.Quaternion targetRot =
+                        new com.jme3.math.Quaternion().fromAngles(0, (float) npc.getFacing(), 0);
+                curRot.slerp(targetRot, Math.min(1.0f, tpf * 8f));
+            }
             rig.root.setLocalRotation(curRot);
-            
-            rig.animate(time, tpf, isMoving || npc.getState().equals("moving"));
             
             float dst = currentPos.distance(playerPos);
             if (dst < minDst) {
@@ -442,6 +510,8 @@ public class Main extends SimpleApplication {
         {0.16f,0.18f,0.28f},
     };
     private static final float[] TOD_FOGD = { 0.014f, 0.020f, 0.011f, 0.006f, 0.022f, 0.015f, 0.014f };
+    // Tone-map exposure: ~1.0 at midday, dimming toward ~0.55 at night.
+    private static final float[] TOD_EXPO = { 0.55f, 0.70f, 0.90f, 1.00f, 0.80f, 0.58f, 0.55f };
     private static final float[][] TOD_DIR = {
         {-0.30f,-0.90f,-0.30f}, // night
         {-0.85f,-0.28f, 0.20f}, // dawn: low from the east
@@ -465,6 +535,7 @@ public class Main extends SimpleApplication {
         ColorRGBA sunC = mix(TOD_SUN, i, t);
         ColorRGBA ambC = mix(TOD_AMB, i, t);
         float fogD = TOD_FOGD[i] + (TOD_FOGD[i + 1] - TOD_FOGD[i]) * t;
+        float expo = TOD_EXPO[i] + (TOD_EXPO[i + 1] - TOD_EXPO[i]) * t;
         Vector3f dir = new Vector3f(
                 TOD_DIR[i][0] + (TOD_DIR[i + 1][0] - TOD_DIR[i][0]) * t,
                 TOD_DIR[i][1] + (TOD_DIR[i + 1][1] - TOD_DIR[i][1]) * t,
@@ -474,6 +545,15 @@ public class Main extends SimpleApplication {
         if (fog != null) { fog.setFogColor(sky); fog.setFogDensity(fogD); }
         if (sun != null) { sun.setColor(sunC.mult(1.25f)); sun.setDirection(dir); }
         if (ambient != null) ambient.setColor(ambC);
+        // Exposure drives the filmic tone map through its white point (larger = dimmer).
+        if (toneMap != null) {
+            float e = Math.max(0.05f, expo);
+            toneMap.setWhitePoint(new Vector3f(TONE_WHITE_POINT / e, TONE_WHITE_POINT / e, TONE_WHITE_POINT / e));
+        }
+        // Keep the sun disc opposite the light travel direction, camera-relative so it never recedes.
+        if (sunDisc != null && cam != null) {
+            sunDisc.setLocalTranslation(cam.getLocation().subtract(dir.mult(SUN_DISC_DIST)));
+        }
     }
 
     private void knock() {

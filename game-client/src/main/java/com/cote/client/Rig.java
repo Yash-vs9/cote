@@ -31,6 +31,15 @@ public class Rig {
 
     private final AssetManager am;
 
+    // Gait tuning: stride is scaled by speed/WALK_SPEED; past RUN_SPEED the gait reads as a run.
+    private static final float WALK_SPEED = 2.4f;
+    private static final float RUN_SPEED = 3.2f;
+    // Reused rotations: animate() runs per-NPC per-frame, so it must not allocate.
+    private final Quaternion qLegL = new Quaternion(), qLegR = new Quaternion();
+    private final Quaternion qArmL = new Quaternion(), qArmR = new Quaternion();
+    private final Quaternion qTorso = new Quaternion();
+    private float gaitPhase = 0;
+
     public Rig(AssetManager assetManager, String gender) {
         this.am = assetManager;
         boolean female = "f".equals(gender);
@@ -108,22 +117,28 @@ public class Rig {
         parent.attachChild(g);
     }
 
-    public void animate(float time, float dt, boolean isMoving) {
-        if (isMoving) {
-            float swing = (float) Math.sin(time * 8.0f) * 0.55f;
-            legL.setLocalRotation(new Quaternion().fromAngles(swing, 0, 0));
-            legR.setLocalRotation(new Quaternion().fromAngles(-swing, 0, 0));
-            armL.setLocalRotation(new Quaternion().fromAngles(-swing, 0, 0));
-            armR.setLocalRotation(new Quaternion().fromAngles(swing, 0, 0));
-            float bob = Math.abs((float) Math.cos(time * 8.0f)) * 0.04f;
-            torso.setLocalTranslation(0, 0.78f + bob, 0);
-        } else {
-            float breathe = (float) Math.sin(time * 1.6f) * 0.01f;
-            legL.setLocalRotation(new Quaternion());
-            legR.setLocalRotation(new Quaternion());
-            armL.setLocalRotation(new Quaternion().fromAngles(0.06f, 0, 0.04f));
-            armR.setLocalRotation(new Quaternion().fromAngles(0.06f, 0, -0.04f));
-            torso.setLocalTranslation(0, 0.78f + breathe, 0);
-        }
+    /**
+     * Blends idle breathing into a speed-scaled walk/run gait. moveBlend eases 0..1
+     * (attack/release handled by the caller); stride frequency and swing amplitude grow with
+     * speed/WALK_SPEED, and past RUN_SPEED the torso leans in while arm swing deepens.
+     */
+    public void animate(float time, float dt, float moveBlend, float speed) {
+        float stride = Math.min(speed / WALK_SPEED, 1.8f);
+        float run = Math.max(0f, Math.min((speed - RUN_SPEED) / 1.2f, 1f));
+
+        gaitPhase += dt * 8.0f * stride * moveBlend;
+        float swing = (float) Math.sin(gaitPhase) * 0.55f * stride * moveBlend;
+        float breathe = (float) Math.sin(time * 1.6f) * 0.01f;
+        float bob = Math.abs((float) Math.cos(gaitPhase)) * 0.04f * moveBlend;
+
+        legL.setLocalRotation(qLegL.fromAngles(swing, 0, 0));
+        legR.setLocalRotation(qLegR.fromAngles(-swing, 0, 0));
+        float pump = 1f + 0.5f * run;
+        armL.setLocalRotation(qArmL.fromAngles(
+                -swing * pump + 0.06f * (1f - moveBlend), 0, 0.04f * (1f - moveBlend)));
+        armR.setLocalRotation(qArmR.fromAngles(
+                swing * pump + 0.06f * (1f - moveBlend), 0, -0.04f * (1f - moveBlend)));
+        torso.setLocalTranslation(0, 0.78f + breathe + (bob - breathe) * moveBlend, 0);
+        torso.setLocalRotation(qTorso.fromAngles(0.28f * run * moveBlend, 0, 0));
     }
 }

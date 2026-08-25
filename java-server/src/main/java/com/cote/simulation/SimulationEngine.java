@@ -187,6 +187,7 @@ public class SimulationEngine {
 
     public RouteManager getRouteManager() { return routeManager; }
     public TrafficManager getTrafficManager() { return trafficManager; }
+    public ReservationManager getReservationManager() { return reservationManager; }
     public List<NPC> getNpcs() { return Collections.unmodifiableList(npcs); }
     public double getClockMin() { return clockMin; }
     public int getDay() { return day; }

@@ -86,6 +86,12 @@ public class DormitoryBuilder {
         mat.setBoolean("UseMaterialColors", true);
         mat.setColor("Ambient", color);
         mat.setColor("Diffuse", color);
+        if (color.a < 1f) {
+            // Glass/water: real alpha blending instead of an ignored alpha channel.
+            mat.getAdditionalRenderState().setBlendMode(com.jme3.material.RenderState.BlendMode.Alpha);
+            mat.getAdditionalRenderState().setDepthWrite(false);
+            geom.setQueueBucket(RenderQueue.Bucket.Transparent);
+        }
         mat.setColor("Specular", new ColorRGBA(0.10f, 0.10f, 0.10f, 1f));
         mat.setFloat("Shininess", 6f);
         geom.setMaterial(mat);
@@ -193,10 +199,12 @@ public class DormitoryBuilder {
         for (int f = 0; f <= FLOORS; f++) {
             float y = f * FH;
             
-            // Floor Slabs (with hole for elevator at X=0, Z=0)
+            // Floor Slabs (holes for elevator at X=0,Z=0 and stairwell at X=10..14, Z=-3..3)
             if (f > 0) {
                 makeBox(12, 0.4f, 28, matConcrete, -8, y, 0, g, true); // Left half
-                makeBox(12, 0.4f, 28, matConcrete, 8, y, 0, g, true); // Right half
+                makeBox(8, 0.4f, 28, matConcrete, 6, y, 0, g, true);   // Right-west strip (X 2..10)
+                makeBox(4, 0.4f, 11, matConcrete, 12, y, -8.5f, g, true); // Right-north (Z -14..-3)
+                makeBox(4, 0.4f, 11, matConcrete, 12, y, 8.5f, g, true);  // Right-south (Z 3..14)
                 makeBox(4, 0.4f, 12, matConcrete, 0, y, -8, g, true); // Back half
                 makeBox(4, 0.4f, 12, matConcrete, 0, y, 8, g, true); // Front half
             } else {
@@ -217,6 +225,14 @@ public class DormitoryBuilder {
                 // Corridor walls
                 makeBox(20, FH, 0.2f, matConcrete, 0, y + FH/2, -3, g, true);
                 makeBox(20, FH, 0.2f, matConcrete, 0, y + FH/2, 3, g, true);
+
+                // Staircase: straight run north along the east strip (X 10..14) from Z=2 to
+                // Z=-2.5, fully inside the slab hole above. 10 steps x 0.32 rise = FH (3.2),
+                // so the top step tops out flush with the next floor's slab surface (y+FH+0.2).
+                for (int s = 0; s < 10; s++) {
+                    makeBox(3.6f, 0.32f, 0.55f, matBalcony, 11.9f,
+                            y + 0.36f + s * 0.32f, 2f - s * 0.5f, g, true);
+                }
                 
                 // Dorm Rooms
                 for (float rx = -8; rx <= 8; rx += 8) { // 3 rooms per side

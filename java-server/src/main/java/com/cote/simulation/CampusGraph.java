@@ -62,6 +62,12 @@ public class CampusGraph {
         NODES.put("ePath2",       new double[]{ 46.0,  50.0});
         NODES.put("eNorth",       new double[]{ 46.0,  64.0});
 
+        // ---- East-North: outdoor Sports Complex (tennis courts, track & soccer) ----
+        NODES.put("sportsJct",   new double[]{ 52.0,  34.0});
+        NODES.put("sportsGate",  new double[]{ 76.0,  34.0});
+        NODES.put("sportsField", new double[]{100.0,  38.0});
+        NODES.put("tennisCourt", new double[]{ 98.0,   8.0});
+
         // ---- North: gate & commercial (mall / store / cafe) ----
         NODES.put("northWalk",    new double[]{  0.0,  55.0});
         NODES.put("gateN",        new double[]{  0.0,  95.0});
@@ -98,6 +104,11 @@ public class CampusGraph {
         addEdge("ePath1", "ePath2"); addEdge("ePath2", "eNorth");
         addEdge("eNorth", "mallA"); addEdge("mallA", "mallInterior");
         addEdge("ePath2", "storeA"); addEdge("storeA", "cafeA"); addEdge("cafeA", "eNorth");
+
+        // Sports complex spur (off the east side path)
+        addEdge("ePath1", "sportsJct"); addEdge("ePath2", "sportsJct");
+        addEdge("sportsJct", "sportsGate"); addEdge("sportsGate", "sportsField");
+        addEdge("sportsGate", "tennisCourt");
 
         // North commercial / gate
         addEdge("courtyard", "northWalk"); addEdge("northWalk", "gateN");
