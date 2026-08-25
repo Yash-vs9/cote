@@ -50,11 +50,34 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     private boolean detached = false;
     private float endedTimer = 0f;
 
-    public StoryManager(SimpleApplication app, SimulationEngine engine, NpcController npcController) {
+    /** Invoked at durable milestones (chapter start, choice, objective done...) for autosave. */
+    private Runnable autosaveHook = () -> {};
+    /** True when this run was started fresh (New Game) rather than Continue. */
+    private boolean freshRun = false;
+
+    public StoryManager(SimpleApplication app, SimulationEngine engine, NpcController npcController,
+                        com.cote.client.systems.GameSave resume) {
         this.app = app;
         this.engine = engine;
         this.npcController = npcController;
+        if (resume != null && "story".equals(resume.mode)) {
+            chapterIdx = Math.max(0, resume.chapterIdx);
+            stepIdx = Math.max(0, resume.stepIdx);
+            flags.addAll(resume.flags);
+            freshRun = false;
+        } else {
+            freshRun = true;
+        }
     }
+
+    public void setAutosaveHook(Runnable r) { this.autosaveHook = r != null ? r : () -> {}; }
+
+    // ---------------------------------------------------------------- getters for save system
+
+    public boolean isActive() { return started && !detached; }
+    public int getChapterIdx() { return chapterIdx; }
+    public int getStepIdx() { return stepIdx; }
+    public java.util.Set<String> getFlags() { return flags; }
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -65,23 +88,19 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
         for (NPC n : engine.getNpcs()) npcNames.put(n.getId(), n.getName());
 
         try {
-            chapters = StoryLoader.load(SCRIPT_RESOURCE);
+            chapters = com.cote.client.story.StoryLoader.load(SCRIPT_RESOURCE);
         } catch (IOException e) {
-            System.err.println("[Story] Failed to load script: " + e.getMessage());
+            com.cote.client.systems.Log.error("Story script failed to load.", e);
             chapters = new java.util.ArrayList<>();
         }
 
-        if (StorySave.exists()) {
-            resumeFrom(StorySave.load());
-        } else {
-            beginNew();
-        }
+        if (freshRun) beginNew();
+        else resumeCurrent();
         started = true;
     }
 
     /** Fresh playthrough from Chapter 1. */
     public void beginNew() {
-        new StorySave().delete();
         chapterIdx = 0;
         stepIdx = 0;
         despawnAll();
@@ -89,12 +108,11 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     }
 
     /** Continue a previous run: jump to the saved step, re-spawning any extras. */
-    private void resumeFrom(StorySave s) {
+    private void resumeCurrent() {
         if (chapters.isEmpty()) { beginNew(); return; }
-        chapterIdx = Math.max(0, Math.min(s.chapterIndex, chapters.size() - 1));
+        chapterIdx = Math.min(chapterIdx, chapters.size() - 1);
         Chapter ch = chapters.get(chapterIdx);
-        stepIdx = Math.max(0, Math.min(s.stepIndex, ch.steps.size()));
-        flags.addAll(s.flags);
+        stepIdx = Math.min(stepIdx, ch.steps.size());
         // Re-apply SPAWN steps already consumed this chapter so staged characters exist.
         for (int i = 0; i < stepIdx && i < ch.steps.size(); i++) {
             Step st = ch.steps.get(i);
@@ -164,17 +182,17 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
                 save();
                 break;
             case NARR:
-                ui.showPage(null, null, st.text(0));
+                ui.showPage(null, null, st.text(0), pageIndex(), pageTotal());
                 mode = Mode.PAGE;
                 save();
                 break;
             case ME:
-                ui.showPage("Ayanokouji", new ColorRGBA(1f, 0.92f, 0.55f, 1f), st.text(0));
+                ui.showPage("Ayanokouji", new ColorRGBA(1f, 0.92f, 0.55f, 1f), st.text(0), pageIndex(), pageTotal());
                 mode = Mode.PAGE;
                 save();
                 break;
             case NPC:
-                ui.showPage(displayName(st.text(0)), speakerColor(st.text(0)), st.text(1));
+                ui.showPage(displayName(st.text(0)), speakerColor(st.text(0)), st.text(1), pageIndex(), pageTotal());
                 mode = Mode.PAGE;
                 save();
                 break;
@@ -183,7 +201,8 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
                 if ((int) st.num(0) != lastChoice) { consume(); runFromCurrent(); return; }
                 String spk = st.text(0);
                 ColorRGBA col = spk.equalsIgnoreCase("me") ? new ColorRGBA(1f, 0.92f, 0.55f, 1f) : speakerColor(spk);
-                ui.showPage(spk.equalsIgnoreCase("me") ? "Ayanokouji" : displayName(spk), col, st.text(1));
+                ui.showPage(spk.equalsIgnoreCase("me") ? "Ayanokouji" : displayName(spk), col, st.text(1),
+                        pageIndex(), pageTotal());
                 mode = Mode.PAGE;
                 save();
                 break;
@@ -270,7 +289,8 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
                 : "Barely scraping by... but a pass is a pass.";
         ui.showPage(null, null,
                 "The exam ends. You answered " + quiz.score + " out of " + quiz.total + " correctly.\n"
-                + verdict + "\nNo one will be expelled today.");
+                + verdict + "\nNo one will be expelled today.",
+                pageTotal(), pageTotal());
         mode = Mode.PAGE;
         quiz = null;
         save();
@@ -350,11 +370,12 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     private void endOfScript() {
         ui.clearObjective();
         ui.showPage(null, null,
-                "Volume 1 — Complete.\n\nClass D survived its first month. Somewhere inside you, "
-                + "something has quietly begun.\n\nPress E to keep exploring the campus freely.");
+                "Volume 1 - Complete.\n\nClass D survived its first month. Somewhere inside you, "
+                + "something has quietly begun.\n\nPress E to keep exploring the campus freely.",
+                1, 1);
         mode = Mode.ENDED;
         endedTimer = Float.MAX_VALUE; // wait for E
-        new StorySave().delete();
+        autosaveHook.run(); // persists completion; Continue afterwards returns to free campus
     }
 
     private void finishAndDetach() {
@@ -365,10 +386,34 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
         app.getStateManager().detach(this);
     }
 
+    /** Durable milestone reached -> let the game layer persist the whole save slot. */
     private void save() {
-        StorySave s = new StorySave();
-        s.flags.addAll(flags);
-        s.store(chapterIdx, stepIdx);
+        autosaveHook.run();
+    }
+
+    /** 1-based position of the current step among this chapter's dialogue pages. */
+    private int pageIndex() {
+        List<Step> steps = chapters.get(chapterIdx).steps;
+        int n = 0;
+        for (int i = 0; i <= Math.min(stepIdx, steps.size() - 1); i++)
+            if (isPageStep(steps.get(i))) n++;
+        return Math.max(1, n);
+    }
+
+    /** Total dialogue pages in the current chapter. */
+    private int pageTotal() {
+        List<Step> steps = chapters.get(chapterIdx).steps;
+        int n = 0;
+        for (Step t : steps) if (isPageStep(t)) n++;
+        return Math.max(1, n);
+    }
+
+    private boolean isPageStep(Step t) {
+        switch (t.type) {
+            case NARR: case ME: case NPC: return true;
+            case RESPONSE: return (int) t.num(0) == lastChoice;
+            default: return false;
+        }
     }
 
     private double[] gotoTarget(Step st) {

@@ -20,10 +20,12 @@ public class HudUI extends BaseAppState {
     private SimpleApplication app;
     
     private BitmapText promptLabel;
+    private com.jme3.scene.Geometry promptPanel;      // translucent pill behind prompts
     
     private BitmapText npcNameLabel;
     private BitmapText npcResponseLabel;
     private BitmapText playerInputLabel;
+    private com.jme3.scene.Geometry chatPanel;        // backdrop for the whole chat cluster
     
     private boolean isDialogueActive = false;
     private NPC currentNpc = null;
@@ -45,6 +47,7 @@ public class HudUI extends BaseAppState {
     private boolean isElevatorActive = false;
     private InteractiveElevator currentElevator = null;
     private BitmapText elevatorLabel;
+    private com.jme3.scene.Geometry elevPanel;
     private int elevatorSelection = 0;
     
     private RawInputListener textInputListener = new RawInputListener() {
@@ -153,6 +156,7 @@ public class HudUI extends BaseAppState {
         isElevatorActive = false;
         currentElevator = null;
         elevatorLabel.removeFromParent();
+        if (elevPanel != null) { elevPanel.removeFromParent(); elevPanel = null; }
     }
 
     private void refreshElevatorPanel() {
@@ -172,11 +176,21 @@ public class HudUI extends BaseAppState {
               .append(currentElevator.isMoving && i == currentElevator.targetFloor ? "  ... moving" : "")
               .append("\n");
         }
-        if (end < n) sb.append("      ...\n");
         elevatorLabel.setText(sb.toString());
         float w = app.getCamera().getWidth();
         float h = app.getCamera().getHeight();
-        elevatorLabel.setLocalTranslation(w * 0.5f - 170, h * 0.72f, 0);
+
+        // Backdrop sized to the rendered text block.
+        if (elevPanel != null) elevPanel.removeFromParent();
+        float lines = sb.toString().split("\n", -1).length;
+        float pw = Math.min(w * 0.5f, 420f);
+        float ph = lines * elevatorLabel.getLineHeight() + 26;
+        elevPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pw, ph,
+                new ColorRGBA(0.03f, 0.05f, 0.09f, 0.85f));
+        app.getGuiNode().attachChild(elevPanel);       // behind
+        app.getGuiNode().attachChild(elevatorLabel);   // label above
+        elevPanel.setLocalTranslation(w * 0.5f - 190, h * 0.72f - ph + 14, 0);
+        elevatorLabel.setLocalTranslation(w * 0.5f - 170, h * 0.72f, 1);
     }
 
     public boolean isElevatorActive() { return isElevatorActive; }
@@ -184,13 +198,7 @@ public class HudUI extends BaseAppState {
     public void showPrompt(String name) {
         if (!isDialogueActive) {
             promptLabel.setText("Press E to talk to " + name);
-            promptLabel.setLocalTranslation(
-                app.getCamera().getWidth() / 2f - promptLabel.getLineWidth() / 2f,
-                app.getCamera().getHeight() / 2f, 0
-            );
-            if (promptLabel.getParent() == null) {
-                app.getGuiNode().attachChild(promptLabel);
-            }
+            layoutPrompt(app.getCamera().getHeight() / 2f);
         }
     }
     
@@ -198,14 +206,29 @@ public class HudUI extends BaseAppState {
     public void showActionPrompt(String text) {
         if (isDialogueActive || isElevatorActive) return;
         promptLabel.setText(text);
+        layoutPrompt(app.getCamera().getHeight() / 2f);
+    }
+
+    /** Centered pill: translucent panel sized to the current prompt text (sits below the crosshair). */
+    private void layoutPrompt(float centerY) {
+        float w = app.getCamera().getWidth(), h = app.getCamera().getHeight();
+        float ly = h / 2f - promptLabel.getLineHeight() * 3.4f;
         promptLabel.setLocalTranslation(
-            app.getCamera().getWidth() / 2f - promptLabel.getLineWidth() / 2f,
-            app.getCamera().getHeight() / 2f, 0
+            w / 2f - promptLabel.getLineWidth() / 2f, ly, 0
         );
-        if (promptLabel.getParent() == null) app.getGuiNode().attachChild(promptLabel);
+        if (promptPanel != null) promptPanel.removeFromParent();
+        promptPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(),
+                Math.min(w * 0.7f, promptLabel.getLineWidth() + 40),
+                promptLabel.getLineHeight() + 18,
+                new ColorRGBA(0.03f, 0.05f, 0.09f, 0.8f));
+        app.getGuiNode().attachChild(promptPanel);
+        app.getGuiNode().attachChild(promptLabel); // label renders above the pill
+        promptPanel.setLocalTranslation(w / 2f - Math.min(w * 0.7f, promptLabel.getLineWidth() + 40) / 2f,
+                ly - 12, 0);
     }
 
     public void hidePrompt() {
+        if (promptPanel != null) { promptPanel.removeFromParent(); promptPanel = null; }
         if (promptLabel.getParent() != null) {
             promptLabel.removeFromParent();
         }
@@ -242,6 +265,16 @@ public class HudUI extends BaseAppState {
 
         modeLabel.setLocalTranslation(w * 0.1f, h * 0.4f - 140, 0);
         updateModeLabel();
+
+        // Backdrop panel spanning the whole chat cluster (history grows upward into it).
+        if (chatPanel != null) chatPanel.removeFromParent();
+        int histLines = Math.min(12, ConversationMemory.get(npc.getId()).size());
+        float topY = h * 0.4f + 30f + (histLines > 0 ? histLines : 1) * historyLabel.getLineHeight() + 16f;
+        float botY = h * 0.4f - 170f;
+        chatPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), w * 0.56f, topY - botY,
+                new ColorRGBA(0.03f, 0.05f, 0.09f, 0.72f));
+        chatPanel.setLocalTranslation(w * 0.065f, botY, 0);
+        app.getGuiNode().attachChild(chatPanel); // first = behind the labels
 
         app.getGuiNode().attachChild(npcNameLabel);
         app.getGuiNode().attachChild(npcResponseLabel);
@@ -300,6 +333,7 @@ public class HudUI extends BaseAppState {
         isDialogueActive = false;
         currentNpc = null;
 
+        if (chatPanel != null) { chatPanel.removeFromParent(); chatPanel = null; }
         npcNameLabel.removeFromParent();
         npcResponseLabel.removeFromParent();
         playerInputLabel.removeFromParent();
@@ -406,6 +440,7 @@ public class HudUI extends BaseAppState {
     public boolean isDialogueActive() { return isDialogueActive; }
 
     private BitmapText flashLabel;
+    private com.jme3.scene.Geometry flashPanel;
     private float flashTimer = 0f;
 
     /** Brief top-of-screen notice, e.g. "Kushida arrived at the Library." */
@@ -415,10 +450,18 @@ public class HudUI extends BaseAppState {
             flashLabel.setSize(app.getAssetManager().loadFont("Interface/Fonts/Default.fnt").getCharSet().getRenderedSize() * 1.4f);
             flashLabel.setColor(new ColorRGBA(1f, 0.9f, 0.5f, 1f));
         }
+        float w = app.getCamera().getWidth(), h = app.getCamera().getHeight();
         flashLabel.setText(text);
-        flashLabel.setLocalTranslation(app.getCamera().getWidth() / 2f - flashLabel.getLineWidth() / 2f,
-                app.getCamera().getHeight() - 60, 0);
-        if (flashLabel.getParent() == null) app.getGuiNode().attachChild(flashLabel);
+        float pw = Math.min(w * 0.9f, flashLabel.getLineWidth() + 44);
+        float ph = flashLabel.getLineHeight() + 20;
+        // Rebuild pill to fit the text, attach it under the label.
+        if (flashPanel != null) flashPanel.removeFromParent();
+        flashPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pw, ph,
+                new ColorRGBA(0.03f, 0.05f, 0.09f, 0.82f));
+        app.getGuiNode().attachChild(flashPanel);
+        app.getGuiNode().attachChild(flashLabel);
+        flashPanel.setLocalTranslation(w / 2f - pw / 2f, h - 60 - ph / 2f + 4, 0);
+        flashLabel.setLocalTranslation(w / 2f - flashLabel.getLineWidth() / 2f, h - 60, 1);
         flashTimer = 4.5f;
     }
 
@@ -426,7 +469,10 @@ public class HudUI extends BaseAppState {
     public void update(float tpf) {
         if (flashTimer > 0) {
             flashTimer -= tpf;
-            if (flashTimer <= 0 && flashLabel != null) flashLabel.removeFromParent();
+            if (flashTimer <= 0) {
+                if (flashLabel != null) flashLabel.removeFromParent();
+                if (flashPanel != null) flashPanel.removeFromParent();
+            }
         }
     }
 

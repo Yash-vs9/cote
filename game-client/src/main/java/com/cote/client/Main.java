@@ -13,15 +13,22 @@ import com.jme3.system.AppSettings;
 
 public class Main extends SimpleApplication {
 
+    /** Campus respawn point (also the free-roam spawn near the dorms). */
+    private static final Vector3f SPAWN = new Vector3f(-34f, 1.4f, 40f);
+
     public static void main(String[] args) {
         Main app = new Main();
         AppSettings settings = new AppSettings(true);
         settings.setTitle("Advanced Nurturing High School - Java Edition");
         settings.setResolution(1280, 720);
-        settings.setVSync(true);
+        // VSync preference is read from disk before the window opens.
+        com.cote.client.systems.Settings boot = new com.cote.client.systems.Settings();
+        boot.loadOrDefaults();
+        settings.setVSync(boot.vsync);
         settings.setSamples(4); // hardware MSAA
         app.setSettings(settings);
         app.setShowSettings(false); // Skip settings dialog
+        app.settingsRef = boot;
         app.start();
     }
     
@@ -39,11 +46,25 @@ public class Main extends SimpleApplication {
     private static final float TONE_WHITE_POINT = 11.2f;
 
     private float interactionCooldown = 0f;
-    private com.jme3.font.BitmapText interactionText;
     private com.jme3.font.BitmapText clockLabel;
     private NpcController npcController;
     private MainMenuState menu;
     private com.cote.client.story.StoryManager story;
+    private PauseMenuState pauseMenu;
+
+    // Persistent product systems.
+    com.cote.client.systems.Settings settingsRef;
+    private com.cote.client.systems.AudioManager audio;
+    // Last-known story progress so saves stay correct even after the story detaches.
+    private int lastChapterIdx = 0, lastStepIdx = 0;
+    private final java.util.Set<String> lastFlags = new java.util.HashSet<>();
+    private boolean lastModeWasStory = false;
+
+    // Quad-based crosshair: dot + four ticks, tinted when something is interactable nearby.
+    private com.jme3.scene.Node crosshair;
+    private final java.util.List<com.jme3.scene.Geometry> crossParts = new java.util.ArrayList<>();
+    private static final ColorRGBA CROSS_IDLE = new ColorRGBA(1f, 1f, 1f, 0.85f);
+    private static final ColorRGBA CROSS_HOT = new ColorRGBA(1f, 0.80f, 0.35f, 1f);
 
     public static final java.util.List<InteractiveDoor> doors = new java.util.ArrayList<>();
     public static final java.util.List<InteractiveElevator> elevators = new java.util.ArrayList<>();
@@ -63,8 +84,9 @@ public class Main extends SimpleApplication {
         // Setup camera and movement speed
         flyCam.setMoveSpeed(15f);
         cam.setLocation(new Vector3f(0, 1.5f, 5));
-        setDisplayFps(true);
-        setDisplayStatView(true);
+        // Debug overlays: dev builds show engine stats; release honors the user setting only.
+        setDisplayFps(com.cote.client.systems.Log.isDev() || settingsRef.showFps);
+        setDisplayStatView(com.cote.client.systems.Log.isDev());
 
         // Create the campus environment
         CampusBuilder builder = new CampusBuilder(assetManager);
@@ -187,6 +209,9 @@ public class Main extends SimpleApplication {
         com.jme3.input.controls.ActionListener actionListener = this::onAction;
         inputManager.addListener(actionListener, "WalkForward", "WalkBackward", "StrafeLeft", "StrafeRight", "Interact", "Sprint",
                 "TimeBack", "TimeFwd", "TimeMorning", "TimeNoon", "TimeEvening", "TimeNight");
+
+        inputManager.addMapping("Pause", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_ESCAPE));
+        inputManager.addListener(actionListener, "Pause");
         
         // 7. Initialize Simulation Engine (Phase 3) + NPC movement controller.
         engine = new com.cote.simulation.SimulationEngine();
@@ -197,20 +222,130 @@ public class Main extends SimpleApplication {
         stateManager.attach(hud);
         hud.setNpcController(npcController);
 
-        // Start near the dorms
-        cam.setLocation(new Vector3f(-34f, 1.4f, 40f));
+        // 9. Product systems: audio, pause menu, then the title screen.
+        audio = new com.cote.client.systems.AudioManager(assetManager, settingsRef);
+        audio.initialize();
 
-        // 9. Title screen: choose Free Roam or Play Story before gameplay begins.
-        // The world above is fully live behind the dimmer; input stays locked until a mode is picked.
-        flyCam.setEnabled(false);
-        menu = new MainMenuState(this, playStory -> {
-            flyCam.setEnabled(true);
-            if (playStory) {
-                story = new com.cote.client.story.StoryManager(this, engine, npcController);
-                stateManager.attach(story); // script teleports the player to its opening scene
-            }
+        pauseMenu = new PauseMenuState(this, settingsRef, audio, new PauseMenuState.Host() {
+            @Override public void onPauseSaveGame() { saveGameNow(true); }
+            @Override public void requestQuitToTitle() { quitToTitle(); }
         });
+
+        // Mouse look sensitivity from persisted settings.
+        flyCam.setRotationSpeed(settingsRef.sensitivityMul());
+        flyCam.setEnabled(false);
+
+        openMainMenu();
+
+        com.cote.client.systems.Log.info("World initialized. Entering title screen ("
+                + com.cote.client.systems.Version.LINE + ").");
+    }
+
+    private void openMainMenu() {
+        menu = new MainMenuState(this, settingsRef, audio, this::onMenuAction);
         stateManager.attach(menu);
+    }
+
+    // ---------------------------------------------------------------- menu routing
+
+    private void onMenuAction(MainMenuState.Action action) {
+        flyCam.setEnabled(true);
+        inputManager.setCursorVisible(false); // capture pointer for FPS look
+        switch (action) {
+            case CONTINUE: {
+                com.cote.client.systems.GameSave s = com.cote.client.systems.GameSave.load();
+                if (s == null) {
+                    hud.flash("Save could not be read - starting a new game.");
+                    startFreeRoam(SPAWN, 0f);
+                } else if ("story".equals(s.mode)) {
+                    engine.setClockMin(s.clockMin);
+                    startStory(s);
+                } else {
+                    engine.setClockMin(s.clockMin);
+                    startFreeRoam(new Vector3f(s.px, s.py, s.pz), s.yawDeg);
+                }
+                break;
+            }
+            case FREE_ROAM:
+                startFreeRoam(SPAWN, 0f);
+                break;
+            case PLAY_STORY:
+                startStory(null);
+                break;
+        }
+    }
+
+    private void startFreeRoam(Vector3f at, float yawDeg) {
+        lastModeWasStory = false;
+        cam.setLocation(at);
+        setYaw(yawDeg);
+        hud.flash("Free roam - explore the campus.");
+    }
+
+    private void startStory(com.cote.client.systems.GameSave resume) {
+        lastModeWasStory = true;
+        story = new com.cote.client.story.StoryManager(this, engine, npcController, resume);
+        story.setAutosaveHook(() -> saveGameNow(false));
+        stateManager.attach(story);
+    }
+
+    private void setYaw(float yawDeg) {
+        cam.setRotation(new com.jme3.math.Quaternion()
+                .fromAngles(0, (float) Math.toRadians(yawDeg), 0));
+    }
+
+    // ---------------------------------------------------------------- save system
+
+    /** Persists the full game slot: mode, player transform, clock and story progress. */
+    private void saveGameNow(boolean userInitiated) {
+        if (story != null && story.isActive()) {
+            lastChapterIdx = story.getChapterIdx();
+            lastStepIdx = story.getStepIdx();
+            lastFlags.clear();
+            lastFlags.addAll(story.getFlags());
+            lastModeWasStory = true;
+        } else if (story != null && !story.isActive()) {
+            // Story finished and detached: continue returns to free campus.
+            lastModeWasStory = false;
+        }
+        float[] angles = new float[3];
+        cam.getRotation().toAngles(angles);
+        com.cote.client.systems.GameSave s = com.cote.client.systems.GameSave.blank();
+        s.store(lastModeWasStory ? "story" : "freeroam",
+                cam.getLocation(), (float) Math.toDegrees(angles[1]), engine.getClockMin(),
+                lastChapterIdx, lastStepIdx, lastFlags);
+        if (userInitiated) {
+            hud.flash("Game saved.");
+            audio.play(com.cote.client.systems.AudioManager.Sfx.CHIME);
+            if (pauseMenu != null && stateManager.getState(PauseMenuState.class) != null) pauseMenu.flashSaved();
+        }
+    }
+
+    private void quitToTitle() {
+        saveGameNow(false); // never lose progress on exit-to-title
+        if (story != null) {
+            if (stateManager.getState(com.cote.client.story.StoryManager.class) != null) stateManager.detach(story);
+            story = null;
+        }
+        flyCam.setEnabled(false);
+        openMainMenu();
+    }
+
+    private void togglePause() {
+        boolean pauseOpen = stateManager.getState(PauseMenuState.class) != null;
+        if (pauseOpen) {
+            stateManager.detach(pauseMenu);
+        } else {
+            stateManager.attach(pauseMenu);
+            audio.play(com.cote.client.systems.AudioManager.Sfx.CLICK);
+        }
+    }
+
+    private boolean anyUiBlocking() {
+        return (menu != null && menu.isEnabled())
+                || (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()))
+                || (story != null && story.isUiBlocking())
+                || stateManager.getState(PauseMenuState.class) != null;
     }
 
     private boolean forward, backward, left, right, sprint;
@@ -223,8 +358,16 @@ public class Main extends SimpleApplication {
     private com.cote.simulation.NPC nearestNpc = null;
     
     private void onAction(String name, boolean isPressed, float tpf) {
-        // Manual time control (works anytime, even while a UI panel is open).
-        if (isPressed && engine != null) {
+        // ESC toggles the pause menu whenever no other screen owns it.
+        if (isPressed && "Pause".equals(name)) {
+            boolean pauseOpen = stateManager.getState(PauseMenuState.class) != null;
+            if (pauseOpen) togglePause();
+            else if (!anyUiBlocking()) togglePause();
+            return;
+        }
+
+        // Manual time control: development builds only (cheating stays out of release).
+        if (isPressed && engine != null && com.cote.client.systems.Log.isDev()) {
             switch (name) {
                 case "TimeBack":    engine.setClockMin(engine.getClockMin() - 60); return;
                 case "TimeFwd":     engine.setClockMin(engine.getClockMin() + 60); return;
@@ -237,6 +380,12 @@ public class Main extends SimpleApplication {
 
         // Title screen owns all input until a mode is chosen.
         if (menu != null && menu.isEnabled()) {
+            forward = false; backward = false; left = false; right = false;
+            return;
+        }
+
+        // While the pause menu is open, gameplay keys are inert.
+        if (stateManager.getState(PauseMenuState.class) != null) {
             forward = false; backward = false; left = false; right = false;
             return;
         }
@@ -297,7 +446,7 @@ public class Main extends SimpleApplication {
                                 if (d.requiresKnock && !d.knocked && !d.isOpen) {
                                     d.knocked = true;
                                     knock();
-                                    hud.showActionPrompt("*knock knock*  — press E again to enter");
+                                    hud.showActionPrompt("*knock knock*  -- press E again to enter");
                                 } else {
                                     d.interact();
                                 }
@@ -318,19 +467,34 @@ public class Main extends SimpleApplication {
     private void initCrossHairs() {
         // Do NOT detachAllChildren here: that wiped the default FPS/statistics overlay.
         guiFont = assetManager.loadFont("Interface/Fonts/Default.fnt");
-        com.jme3.font.BitmapText ch = new com.jme3.font.BitmapText(guiFont, false);
-        ch.setSize(guiFont.getCharSet().getRenderedSize() * 2);
-        ch.setText("+");
-        ch.setLocalTranslation(
-                settings.getWidth() / 2f - ch.getLineWidth() / 2f,
-                settings.getHeight() / 2f + ch.getLineHeight() / 2f, 0);
-        guiNode.attachChild(ch);
+
+        // --- Crosshair: center dot + 4 ticks, built from translucent quads ---
+        crosshair = new com.jme3.scene.Node("crosshair");
+        float cx = settings.getWidth() / 2f, cy = settings.getHeight() / 2f;
+        addCrossPart(cx - 2, cy - 2, 4, 4);      // dot
+        addCrossPart(cx - 1, cy + 8, 2, 9);      // top tick
+        addCrossPart(cx - 1, cy - 17, 2, 9);     // bottom tick
+        addCrossPart(cx + 8, cy - 1, 9, 2);      // right tick
+        addCrossPart(cx - 17, cy - 1, 9, 2);     // left tick
+        guiNode.attachChild(crosshair);
+        setCrossTint(CROSS_IDLE);
 
         clockLabel = new com.jme3.font.BitmapText(guiFont, false);
         clockLabel.setSize(guiFont.getCharSet().getRenderedSize() * 1.3f);
         clockLabel.setColor(new ColorRGBA(1f, 1f, 0.85f, 1f));
         clockLabel.setLocalTranslation(14, settings.getHeight() - 10, 0);
         guiNode.attachChild(clockLabel);
+    }
+
+    private void addCrossPart(float x, float y, float w, float h) {
+        com.jme3.scene.Geometry g = com.cote.client.ui.UiKit.panel(assetManager, w, h, CROSS_IDLE);
+        g.setLocalTranslation(x, y, 0);
+        crossParts.add(g);
+        crosshair.attachChild(g);
+    }
+
+    private void setCrossTint(ColorRGBA c) {
+        for (com.jme3.scene.Geometry g : crossParts) com.cote.client.ui.UiKit.setColor(g, c);
     }
 
     private String phaseName(float clockMin) {
@@ -341,16 +505,24 @@ public class Main extends SimpleApplication {
     }
 
     public void simpleUpdate(float tpf) {
-        if (clockLabel != null && engine != null) {
-            float cm = (float) engine.getClockMin();
-            clockLabel.setText(engine.getFormattedTime() + "  " + phaseName(cm)
-                    + "    [ / ] hour   F1-F4 morning/noon/evening/night");
+        // Safety net: never let the player fall out of the world or accumulate NaN state.
+        Vector3f p0 = cam.getLocation();
+        if (!Float.isFinite(p0.x) || !Float.isFinite(p0.y) || !Float.isFinite(p0.z) || p0.y < -8f) {
+            cam.setLocation(SPAWN.clone());
+            hud.flash("Recovered to the campus spawn point.");
+            com.cote.client.systems.Log.warn("Player position was invalid - recovered to spawn.");
         }
 
-        // Movement is locked during dialogue, while the elevator panel is open,
-        // or while a story page/choice/quiz owns the screen.
+        if (clockLabel != null && engine != null) {
+            float cm = (float) engine.getClockMin();
+            clockLabel.setText(engine.getFormattedTime() + "   " + phaseName(cm));
+        }
+
+        // Movement is locked during dialogue, elevator, pause menu or story screens.
+        boolean pauseOpen = stateManager.getState(PauseMenuState.class) != null;
         boolean storyBlocking = story != null && story.isUiBlocking();
-        boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive())) || storyBlocking;
+        boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()))
+                || storyBlocking || pauseOpen;
         if (!uiLock) {
             Vector3f pos = cam.getLocation();
             final float radius = 0.4f, playerHeight = 1.8f, eyeHeight = 1.4f, stepHeight = 0.6f;
@@ -508,6 +680,18 @@ public class Main extends SimpleApplication {
             }
         } else if (hud != null) {
             hud.hidePrompt();
+        }
+
+        // Crosshair: hidden on menu / chat / story screens; turns amber near interactables.
+        boolean menuOpen = menu != null && menu.isEnabled();
+        boolean chatOpen = hud != null && (hud.isDialogueActive() || hud.isElevatorActive());
+        boolean storyBlock = story != null && story.isUiBlocking();
+        if (crosshair != null) {
+            boolean vis = !menuOpen && !chatOpen && !storyBlock;
+            crosshair.setCullHint(vis ? com.jme3.scene.Spatial.CullHint.Inherit
+                                      : com.jme3.scene.Spatial.CullHint.Always);
+            if (vis && nearestNpc != null) setCrossTint(CROSS_HOT);
+            else if (vis) setCrossTint(CROSS_IDLE);
         }
     }
 

@@ -1,4 +1,3 @@
-opencode.json
 gemini.key
 game-client/gemini.key
 npc_memory/
@@ -7,3 +6,10 @@ target/
 
 # Story runtime save data
 story_save.properties
+
+# Runtime artifacts
+dist/
+sfx_cache/
+logs/
+cp.txt
+target/
