@@ -352,6 +352,7 @@ public class Main extends SimpleApplication {
     private com.cote.simulation.SimulationEngine engine;
     private java.util.Map<String, Rig> npcRigs = new java.util.HashMap<>();
     private java.util.Map<String, Float> moveBlends = new java.util.HashMap<>();
+    private java.util.Map<String, Float> prevFacing = new java.util.HashMap<>();
     private float time = 0;
     
     private HudUI hud;
@@ -625,24 +626,34 @@ public class Main extends SimpleApplication {
                              : Math.max(0f, blend - tpf / 0.15f);
             moveBlends.put(npc.getId(), blend);
             float speed = isMoving ? (float) Math.sqrt(dispSq) / Math.max(tpf, 1e-4f) : 0f;
-            rig.animate(time, tpf, blend, speed);
 
             // Idle at the destination: turn toward the player standing close by.
             float pdx = playerPos.x - currentPos.x, pdz = playerPos.z - currentPos.z;
             boolean facePlayer = npcController.isArrived(npc.getId()) && pdx * pdx + pdz * pdz < 9f;
 
             com.jme3.math.Quaternion curRot = rig.root.getLocalRotation().clone();
+            float targetYaw;
             if (facePlayer) {
-                // Yaw convention matches NPC facing: atan2(dx, dz) radians about +Y (0 faces +Z).
-                com.jme3.math.Quaternion targetRot =
-                        new com.jme3.math.Quaternion().fromAngles(0, (float) Math.atan2(pdx, pdz), 0);
-                curRot.slerp(targetRot, Math.min(1.0f, tpf * 4f));
+                targetYaw = (float) Math.atan2(pdx, pdz);
             } else {
-                com.jme3.math.Quaternion targetRot =
-                        new com.jme3.math.Quaternion().fromAngles(0, (float) npc.getFacing(), 0);
-                curRot.slerp(targetRot, Math.min(1.0f, tpf * 8f));
+                targetYaw = (float) npc.getFacing();
             }
+            // Smooth rotation with rate-limited slerp
+            float rotSpeed = facePlayer ? tpf * 4f : tpf * 8f;
+            com.jme3.math.Quaternion targetRot =
+                    new com.jme3.math.Quaternion().fromAngles(0, targetYaw, 0);
+            curRot.slerp(targetRot, Math.min(1.0f, rotSpeed));
             rig.root.setLocalRotation(curRot);
+
+            // Compute facing delta for torso twist (counter-rotation during turns)
+            float prevYaw = prevFacing.getOrDefault(npc.getId(), targetYaw);
+            float facingDelta = targetYaw - prevYaw;
+            // Wrap to [-PI, PI]
+            if (facingDelta > Math.PI) facingDelta -= (float) (Math.PI * 2);
+            if (facingDelta < -Math.PI) facingDelta += (float) (Math.PI * 2);
+            prevFacing.put(npc.getId(), targetYaw);
+
+            rig.animate(time, tpf, blend, speed, facingDelta);
             
             float dst = currentPos.distance(playerPos);
             if (dst < minDst) {
