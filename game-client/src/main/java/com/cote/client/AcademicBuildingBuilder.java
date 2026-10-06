@@ -179,6 +179,21 @@ public class AcademicBuildingBuilder {
             }
         }
 
+        // ---------- Night-window panes (warm interior light after dusk; non-colliding decals) ----------
+        for (int k = 0; k < STORIES; k++) {
+            float wy = FH * k + 2.3f;
+            for (float wx : new float[]{-24, -16, -8, 8, 16, 24}) {
+                CampusBuilder.NIGHT_WINDOWS.add(makeBox(3, 1.6f, 0.08f, glass, wx, wy, BZ + 13.55f, g, false));
+                CampusBuilder.NIGHT_WINDOWS.add(makeBox(3, 1.6f, 0.08f, glass, wx, wy, BZ - 13.55f, g, false));
+            }
+            if (k > 0) {
+                for (float wz : new float[]{BZ - 8, BZ, BZ + 8}) {
+                    CampusBuilder.NIGHT_WINDOWS.add(makeBox(0.08f, 1.6f, 3, glass, -30.55f, wy, wz, g, false));
+                    CampusBuilder.NIGHT_WINDOWS.add(makeBox(0.08f, 1.6f, 3, glass, 30.55f, wy, wz, g, false));
+                }
+            }
+        }
+
         // ---------- Elevator (in the service core, open toward the corridor/west) ----------
         Node elevPlat = new Node("AcadElevator");
         elevPlat.setLocalTranslation(24, 0, BZ + 7); // X 24, Z -49

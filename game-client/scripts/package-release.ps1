@@ -1,7 +1,7 @@
 # Builds the production release package: dist/ANHS-Java-Edition-v<version>/
 # Output contains only runtime artifacts (jars, launchers, docs) - no sources.
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = "1.1.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,7 +43,7 @@ java -XX:+UseG1GC -Xms256m -Xmx2g -cp "lib/*" com.cote.client.Main
 '@ | Set-Content "$dist\play-linux-mac.sh" -Encoding ASCII
 
 @'
-Version:      1.0.0
+Version:      1.1.0
 Build:        release
 Platforms:    Windows / Linux / macOS (Java 17 or newer)
 

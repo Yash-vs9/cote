@@ -46,7 +46,9 @@ Two Maven modules:
   Every modal screen zeroes movement flags so state never leaks between screens.
 - **Frame independence**: everything advances by `tpf`/delta seconds; the server clock
   converts seconds to in-game minutes (`20 real min = 24 h`).
-- **Persistence**: one versioned slot `save.dat` (atomic temp+move). Legacy
+- **Persistence**: three versioned slots `save1..3.dat` (atomic temp+move, format v2:
+  player transform, clock, **day counter + private points**). `Continue` picks the most
+  recent slot; pre-1.1 `save.dat` is copied into slot 1 once at boot. Legacy
   `story_save.properties` is imported once then deleted. Settings live in
   `settings.properties`. Story milestones trigger autosave through a hook
   (`StoryManager.setAutosaveHook`) so the story module stays decoupled from I/O.
@@ -55,9 +57,13 @@ Two Maven modules:
 
 Content lives in `src/main/resources/story/volume1.story` — a line-based DSL parsed by
 `StoryLoader` (directives: `CHAPTER/NARR/ME/NPC/OBJ/GOTO/GOTOAT/WAIT/TIME/TELEPORT/
-CHOICE/RESPONSE/SPAWN/DESPAWN/CMD/PAUSE/RESUME/SET/QUIZ/TITLE/END`, `|` separates args,
-`\|` escapes). Editing it requires no code changes; run `mvn test` to validate all
-cross-references against `Landmarks` and the NPC roster.
+CHOICE/RESPONSE/SPAWN/DESPAWN/CMD/PAUSE/RESUME/SET/LABEL/JUMP/IF...JUMP/GOTO_CH/
+QUIZ/TITLE/END`, `|` separates args, `\|` escapes). Branching: `LABEL name` marks a
+chapter-scoped target, `JUMP name` redirects unconditionally, `IF flag JUMP name`
+redirects only when the flag is set, `GOTO_CH n` jumps to another chapter, and a
+`RESPONSE` with a trailing 4th arg sets a flag when that branch plays — so choices
+carry forward. `mvn test` validates every cross-reference (jump targets, GOTO/CMD
+places, chapter numbers) against the script.
 
 ## 4. Debug vs release
 

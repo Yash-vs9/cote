@@ -133,6 +133,37 @@ public class NpcController {
         return n != null && n.phase == ARRIVED;
     }
 
+    /** Names of NPCs within {@code radius} metres on the same floor, excluding the speaker.
+     *  Feeds the AI chat prompt so characters know who is standing around them. */
+    public String nearbyNames(String excludeId, double radius) {
+        NPC self = null;
+        for (NPC n : engine.getNpcs()) if (n.getId().equals(excludeId)) { self = n; break; }
+        if (self == null) return "";
+        Nav selfNav = navs.get(excludeId);
+        double selfY = selfNav != null ? selfNav.y : 0;
+        StringBuilder sb = new StringBuilder();
+        for (NPC other : engine.getNpcs()) {
+            if (other.getId().equals(excludeId)) continue;
+            Nav otherNav = navs.get(other.getId());
+            double otherY = otherNav != null ? otherNav.y : 0;
+            if (Math.abs(otherY - selfY) > 0.5) continue; // different floors never "nearby"
+            double dx = other.getX() - self.getX(), dz = other.getZ() - self.getZ();
+            if (dx * dx + dz * dz <= radius * radius) {
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(other.getName());
+            }
+        }
+        return sb.toString();
+    }
+
+    /** A student whose assigned dorm room sits on the given floor, or null (for knock-to-answer). */
+    public String npcOnDormFloor(int floor) {
+        for (Map.Entry<String, double[]> e : dormRoom.entrySet()) {
+            if ((int) Math.round(e.getValue()[2] / DORM_FH) == floor) return e.getKey();
+        }
+        return null;
+    }
+
     public void update(float tpf) {
         for (NPC npc : engine.getNpcs()) {
             Nav nav = navs.get(npc.getId());

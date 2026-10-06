@@ -24,17 +24,19 @@ public class ReservationManager {
     private final Map<String, Spot> spots = new LinkedHashMap<>();
 
     public ReservationManager() {
-        // Classroom 1-D Desks (5x5 grid)
+        // Classroom 1-D desks (5x5 grid) — coordinates match the ground-floor classroom
+        // room the client renders inside the Academic Building footprint (x -10..10,
+        // z -68..-58; blackboard on the north wall), so students settle INTO the room.
         int idx = 1;
         for (int r = 0; r < 5; r++) {
             for (int c = 0; c < 5; c++) {
                 String id = String.format("CLASS_1D_SEAT_%02d", idx++);
-                double x = -65.5 + c * 1.5;
-                double z = -22.4 + r * 1.2;
-                spots.put(id, new Spot(id, "class1d", "desk_seat", x, z, Math.PI / 2));
+                double x = -6.0 + c * 3.0;
+                double z = -66.0 + r * 1.5;
+                spots.put(id, new Spot(id, "class1d", "desk_seat", x, z, Math.PI));
             }
         }
-        spots.put("CLASS_1D_TEACHER", new Spot("CLASS_1D_TEACHER", "class1d", "teacher_podium", -57.5, -20.0, -Math.PI / 2));
+        spots.put("CLASS_1D_TEACHER", new Spot("CLASS_1D_TEACHER", "class1d", "teacher_podium", 0.0, -67.5, 0.0));
 
         // Cafeteria Tables
         int cafIdx = 1;

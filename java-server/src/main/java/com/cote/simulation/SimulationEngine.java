@@ -185,6 +185,11 @@ public class SimulationEngine {
         tick(0.0);
     }
 
+    /** Restore the persisted day counter (save/load). */
+    public synchronized void setDay(int day) {
+        this.day = Math.max(1, day);
+    }
+
     public RouteManager getRouteManager() { return routeManager; }
     public TrafficManager getTrafficManager() { return trafficManager; }
     public ReservationManager getReservationManager() { return reservationManager; }

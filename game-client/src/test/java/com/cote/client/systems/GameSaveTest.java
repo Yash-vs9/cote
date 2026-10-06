@@ -16,7 +16,7 @@ class GameSaveTest {
     void storeThenLoadRoundTripsAllFields() {
         GameSave s = GameSave.blankAt(dir.resolve("save.dat"));
         s.store("story", new com.jme3.math.Vector3f(1.5f, 2.5f, 3.5f), 45f, 512.5, 7, 13,
-                java.util.List.of("evidence_ready", "choice_1"));
+                java.util.List.of("evidence_ready", "choice_1"), 3, 123456L);
         assertTrue(java.nio.file.Files.exists(dir.resolve("save.dat")));
 
         GameSave loaded = GameSave.loadFrom(dir.resolve("save.dat"));
@@ -31,6 +31,25 @@ class GameSaveTest {
         assertEquals(7, loaded.chapterIdx);
         assertEquals(13, loaded.stepIdx);
         assertTrue(loaded.flags.contains("evidence_ready"));
+        assertEquals(3, loaded.day);
+        assertEquals(123456L, loaded.points);
+    }
+
+    @Test
+    void v1SavesLoadWithV2Defaults() throws Exception {
+        // A pre-1.1 save: format version 1, no day/points keys.
+        java.util.Properties p = new java.util.Properties();
+        p.setProperty("version", "1");
+        p.setProperty("mode", "freeroam");
+        p.setProperty("chapterIdx", "2");
+        try (var out = java.nio.file.Files.newOutputStream(dir.resolve("save.dat"))) {
+            p.store(out, "");
+        }
+        GameSave loaded = GameSave.loadFrom(dir.resolve("save.dat"));
+        assertNotNull(loaded);
+        assertEquals(1, loaded.version);
+        assertEquals(1, loaded.day, "v1 saves predate the day counter");
+        assertEquals(0L, loaded.points, "v1 saves predate the wallet");
     }
 
     @Test

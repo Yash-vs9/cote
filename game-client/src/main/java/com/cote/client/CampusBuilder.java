@@ -33,6 +33,10 @@ public class CampusBuilder {
     }
     
     public static final List<AABB> colliders = new ArrayList<>();
+    /** Sit-able benches: {x, z, yawDeg the seated player faces}. */
+    public static final List<float[]> BENCHES = new ArrayList<>();
+    /** Window geometries that switch on warm interior light after dusk. */
+    public static final List<Geometry> NIGHT_WINDOWS = new ArrayList<>();
 
     public CampusBuilder(AssetManager assetManager) {
         this.assetManager = assetManager;
@@ -110,7 +114,7 @@ public class CampusBuilder {
             makeBox(BLD_L, 0.5f, BLD_D, matDark, cX, 6.0f * k + 0.25f, cZ, g, true);
         }
 
-        // Exterior Glass Facade
+        // Exterior Glass Facade (registered as night windows: warm interior light after dusk)
         int bays = 8;
         float bayW = BLD_L / bays;
         for (int t = 0; t < TIERS; t++) {
@@ -118,10 +122,10 @@ public class CampusBuilder {
                 float bx = cX - BLD_L / 2f + bayW * (b + 0.5f);
                 float y = 3.2f + 6.0f * t;
                 if (t == 0 && (b == 3 || b == 4)) {
-                    makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ + BLD_D / 2f, g, true);
+                    NIGHT_WINDOWS.add(makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ + BLD_D / 2f, g, true));
                 } else {
-                    makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ - BLD_D / 2f, g, true);
-                    makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ + BLD_D / 2f, g, true);
+                    NIGHT_WINDOWS.add(makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ - BLD_D / 2f, g, true));
+                    NIGHT_WINDOWS.add(makeBox(bayW - 0.15f, 5.5f, 0.05f, matGlass, bx, y, cZ + BLD_D / 2f, g, true));
                 }
             }
         }
@@ -163,6 +167,12 @@ public class CampusBuilder {
         makeBox(10, 4, 0.2f, matTile, cX + 16, 2f, cZ - 2, g, true);
         makeBox(1, 2, 8, matTile, cX + 16, 1f, cZ - 8, g, true); // Aisles
         makeBox(1, 2, 8, matTile, cX + 20, 1f, cZ - 8, g, true); // Aisles
+
+        // Vending machine outside the store entrance (buy drinks with private points).
+        ColorRGBA matVendRed = new ColorRGBA(0.75f, 0.15f, 0.15f, 1.0f);
+        makeBox(1.4f, 2.4f, 0.9f, matVendRed, cX + 22, 1.2f, cZ - 5, g, true).setName("VendingMachine");
+        makeBox(1.0f, 1.4f, 0.06f, matDark, cX + 22, 1.5f, cZ - 5.48f, g, false); // glass front
+        makeBox(0.9f, 0.35f, 0.06f, matTile, cX + 22, 0.62f, cZ - 5.48f, g, false); // pickup flap
         
         // 2nd Floor Shops
         // SIV CAMERA (Electronics)
@@ -588,6 +598,18 @@ public class CampusBuilder {
                 makeBox(3.5f, 3.5f, 3.5f, matLeaves, tx + noise, 4.0f, cZ + tz - noise, g, true, true, false);
             }
         }
+
+        // Park benches around the fountain ring (sit-able: rest to pass time).
+        ColorRGBA matBench = new ColorRGBA(0.45f, 0.31f, 0.18f, 1.0f);
+        float[][] benches = {
+                {0f, 18.5f, 180f}, {0f, -2.5f, 0f}, {-10.5f, 8f, 90f}, {10.5f, 8f, -90f}};
+        for (float[] b : benches) {
+            makeBox(2.2f, 0.1f, 0.6f, matBench, b[0], 0.5f, b[1], g, true, true, true);   // seat
+            makeBox(2.2f, 0.5f, 0.08f, matBench, b[0], 0.75f, b[1] + (b[2] == 0f ? 0.26f : -0.26f), g, true, true, false); // backrest
+            makeBox(0.12f, 0.5f, 0.5f, matGranite, b[0] - 0.9f, 0.25f, b[1], g, true, true, true); // legs
+            makeBox(0.12f, 0.5f, 0.5f, matGranite, b[0] + 0.9f, 0.25f, b[1], g, true, true, true);
+            BENCHES.add(new float[]{b[0], b[1], b[2]});
+        }
     }
 
     private void buildCouncilRoom() {
@@ -638,14 +660,14 @@ public class CampusBuilder {
         makePlane(24, 24, matFloor, cX, 0.03f, cZ, g);
         makePlane(24, 24, matFloor, cX, 4.03f, cZ, g); // Floor 2
         
-        makeBox(0.4f, 8.0f, 24, matGlass, cX - 12, 4.0f, cZ, g, true); // West
-        makeBox(24, 8.0f, 0.4f, matGlass, cX, 4.0f, cZ - 12, g, true); // North
-        makeBox(24, 8.0f, 0.4f, matGlass, cX, 4.0f, cZ + 12, g, true); // South
-        
+        NIGHT_WINDOWS.add(makeBox(0.4f, 8.0f, 24, matGlass, cX - 12, 4.0f, cZ, g, true)); // West
+        NIGHT_WINDOWS.add(makeBox(24, 8.0f, 0.4f, matGlass, cX, 4.0f, cZ - 12, g, true)); // North
+        NIGHT_WINDOWS.add(makeBox(24, 8.0f, 0.4f, matGlass, cX, 4.0f, cZ + 12, g, true)); // South
+
         // East wall with entrance
-        makeBox(0.4f, 8.0f, 10, matGlass, cX + 12, 4.0f, cZ - 7, g, true);
-        makeBox(0.4f, 8.0f, 10, matGlass, cX + 12, 4.0f, cZ + 7, g, true);
-        makeBox(0.4f, 5.0f, 4, matGlass, cX + 12, 5.5f, cZ, g, true);
+        NIGHT_WINDOWS.add(makeBox(0.4f, 8.0f, 10, matGlass, cX + 12, 4.0f, cZ - 7, g, true));
+        NIGHT_WINDOWS.add(makeBox(0.4f, 8.0f, 10, matGlass, cX + 12, 4.0f, cZ + 7, g, true));
+        NIGHT_WINDOWS.add(makeBox(0.4f, 5.0f, 4, matGlass, cX + 12, 5.5f, cZ, g, true));
 
         // Roof (encloses the library)
         makeBox(24.4f, 0.4f, 24.4f, matWood, cX, 8.15f, cZ, g, false);

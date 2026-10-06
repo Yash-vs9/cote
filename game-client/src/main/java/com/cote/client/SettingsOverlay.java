@@ -68,14 +68,14 @@ public class SettingsOverlay extends BaseAppState {
         BitmapText note = new BitmapText(font);
         note.setSize(font.getCharSet().getRenderedSize() * 0.95f);
         note.setColor(UiKit.TEXT_DIM);
-        note.setText("Changes save instantly. VSync & shadow quality apply next launch.");
+        note.setText("Changes save instantly. VSync applies next launch.");
         note.setLocalTranslation(w / 2f - note.getLineWidth() / 2f, h * 0.835f, 1);
         ui.attachChild(note);
 
         float x = w / 2f - pw / 2f + 46f;
         float rowW = pw - 92f;
         float y = h * 0.775f;
-        float step = h * 0.093f;
+        float step = h * 0.082f;
 
         sliders.add(Widgets.makeSlider(app, ui, font, "Master Volume", settings.master(), x, y, rowW,
                 v -> { settings.masterVolume = Math.round(v * 100); changed(); }));
@@ -91,17 +91,30 @@ public class SettingsOverlay extends BaseAppState {
         y -= step;
         sliders.add(Widgets.makeSlider(app, ui, font, "Mouse Sensitivity", (settings.sensitivityMul() - 0.2f) / 1.8f, x, y, rowW,
                 v -> { settings.sensitivity = Math.round((v * 1.8f + 0.2f) * 100); changed(); }));
+        y -= step;
+        // FOV applies live so players can feel the change immediately.
+        sliders.add(Widgets.makeSlider(app, ui, font, "Field of View", (clampFov(settings.fov) - 45f) / 55f, x, y, rowW,
+                v -> {
+                    settings.fov = Math.round(45f + v * 55f);
+                    float fovDeg = clampFov(settings.fov);
+                    app.getCamera().setFrustumPerspective(fovDeg,
+                            (float) app.getCamera().getWidth() / app.getCamera().getHeight(), 0.05f, 1000f);
+                    changed();
+                }));
         y -= step * 1.15f;
 
         toggles.add(Widgets.makeToggle(app, ui, font, "Reduced Motion", settings.reducedMotion, x, y, rowW,
                 b -> { settings.reducedMotion = b; changed(); }));
         y -= step;
+        toggles.add(Widgets.makeToggle(app, ui, font, "Rain Weather", settings.weather, x, y, rowW,
+                b -> { settings.weather = b; changed(); }));
+        y -= step;
         toggles.add(Widgets.makeToggle(app, ui, font, "Show FPS Counter", settings.showFps, x, y, rowW,
                 b -> { settings.showFps = b; changed(); }));
-        y -= step * 1.25f;
+        y -= step * 1.1f;
 
         backBtn = Widgets.makeButton(app, ui, font, "BACK",
-                w / 2f - 110f, h * 0.145f, 220f, h * 0.07f);
+                w / 2f - 110f, Math.max(h * 0.075f, y - h * 0.01f), 220f, h * 0.07f);
         backBtn.onFire = this::close;
         ui.attachChild(backBtn.bg);
         ui.attachChild(backBtn.edgeLine);
@@ -117,6 +130,8 @@ public class SettingsOverlay extends BaseAppState {
         audio.applyVolumes();
         if (onChanged != null) onChanged.run();
     }
+
+    private static float clampFov(int fov) { return Math.max(45f, Math.min(100f, fov)); }
 
     private void close() {
         audio.play(AudioManager.Sfx.BACK);

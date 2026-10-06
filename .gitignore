@@ -13,3 +13,12 @@ sfx_cache/
 logs/
 cp.txt
 target/
+
+# Player-created runtime data
+affinity.properties
+save*.dat
+screenshots/
+
+# Session tool state
+.zcode/
+.zcodeignore

@@ -52,6 +52,8 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
 
     /** Invoked at durable milestones (chapter start, choice, objective done...) for autosave. */
     private Runnable autosaveHook = () -> {};
+    /** Invoked once when the midterm is graded (arg = correct answers) so the game layer can pay out. */
+    private java.util.function.IntConsumer quizRewardHook = null;
     /** True when this run was started fresh (New Game) rather than Continue. */
     private boolean freshRun = false;
 
@@ -71,6 +73,9 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     }
 
     public void setAutosaveHook(Runnable r) { this.autosaveHook = r != null ? r : () -> {}; }
+
+    /** Optional hook so the game layer can convert the exam score into private points. */
+    public void setQuizRewardHook(java.util.function.IntConsumer r) { this.quizRewardHook = r; }
 
     // ---------------------------------------------------------------- getters for save system
 
@@ -134,6 +139,23 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
                 case SET:
                     flags.add(st.text(0));
                     break;
+                case LABEL:
+                    break; // pure marker; consume() moves past it
+                case JUMP:
+                    stepIdx = labelIndex(chapters.get(chapterIdx), st.text(0));
+                    break;
+                case IF_JUMP:
+                    stepIdx = flags.contains(st.text(0))
+                            ? labelIndex(chapters.get(chapterIdx), st.text(1))
+                            : stepIdx; // not taken: consume() steps past this IF
+                    break;
+                case GOTO_CH: {
+                    int target = (int) st.num(0);
+                    for (int c = 0; c < chapters.size(); c++) {
+                        if (chapters.get(c).number == target) { chapterIdx = c; stepIdx = -1; break; }
+                    }
+                    break; // stepIdx -1 + consume() lands on the target chapter's first step
+                }
                 case TIME:
                     engine.setClockMin(st.num(0));
                     break;
@@ -199,6 +221,7 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
             case RESPONSE:
                 // Wrong branch: skip silently. Right branch: play like ME/NPC.
                 if ((int) st.num(0) != lastChoice) { consume(); runFromCurrent(); return; }
+                if (st.texts.length > 2 && !st.text(2).isEmpty()) flags.add(st.text(2));
                 String spk = st.text(0);
                 ColorRGBA col = spk.equalsIgnoreCase("me") ? new ColorRGBA(1f, 0.92f, 0.55f, 1f) : speakerColor(spk);
                 ui.showPage(spk.equalsIgnoreCase("me") ? "Ayanokouji" : displayName(spk), col, st.text(1),
@@ -228,7 +251,8 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
                 save();
                 break;
             case WAIT:
-                ui.showObjective("Wait for the right moment (" + fmtClock(st.num(0)) + ") — use [ / ] or F1-F4 to pass time");
+                ui.showObjective("Wait for the right moment (" + fmtClock(st.num(0)) + ") — sit on a bench to pass time"
+                        + (com.cote.client.systems.Log.isDev() ? ", or use [ / ] / F1-F4" : ""));
                 mode = Mode.WAITING;
                 save();
                 break;
@@ -287,6 +311,10 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
         String verdict = quiz.score >= quiz.total - 1 ? "A flawless performance."
                 : quiz.score >= quiz.total / 2 ? "Solid work — more than enough to stay in Class D."
                 : "Barely scraping by... but a pass is a pass.";
+        // Result flags steer the Chapter 11 branch scenes; the mid band (3-4 of 6) takes the main track.
+        if (quiz.score >= quiz.total - 1) flags.add("quiz_high");
+        else if (quiz.score <= quiz.total / 3) flags.add("quiz_low");
+        if (quizRewardHook != null) quizRewardHook.accept(quiz.score);
         ui.showPage(null, null,
                 "The exam ends. You answered " + quiz.score + " out of " + quiz.total + " correctly.\n"
                 + verdict + "\nNo one will be expelled today.",
@@ -366,6 +394,15 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     private void consume() { stepIdx++; save(); }
 
     private boolean isFinished() { return peekStep() == null; }
+
+    /** Index of a LABEL step in this chapter, or -1 (unknown labels were rejected at load time). */
+    private static int labelIndex(Chapter ch, String label) {
+        for (int i = 0; i < ch.steps.size(); i++) {
+            Step s = ch.steps.get(i);
+            if (s.type == Step.Type.LABEL && s.text(0).equals(label)) return i;
+        }
+        return -1;
+    }
 
     private void endOfScript() {
         ui.clearObjective();
@@ -461,6 +498,12 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     private static String fmtClock(double minutes) {
         int m = (int) minutes % 1440;
         return String.format("%02d:%02d", m / 60, m % 60);
+    }
+
+    /** World target {x, z, radius} of the active walk-to objective, or null (drives the compass dot). */
+    public double[] activeGotoTarget() {
+        if (!started || detached || mode != Mode.GOTO || current == null) return null;
+        return gotoTarget(current);
     }
 
     // ---------------------------------------------------------------- queries for Main

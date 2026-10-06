@@ -29,11 +29,15 @@ public final class Settings {
     /** Reduced motion: disables letterbox slide + camera bob flourishes. */
     public boolean reducedMotion = false;
 
-    // Graphics (applied where possible at runtime; some on next boot)
+    // Graphics (applied where possible at runtime; vsync on next boot)
     public boolean vsync = true;
     public boolean shadows = true;
     public boolean ssao = true;
     public boolean showFps = false; // release default off; dev build forces overlays separately
+    /** Camera field of view in degrees, 45..100. */
+    public int fov = 55;
+    /** Ambient rain weather cycles. */
+    public boolean weather = true;
 
     private final Path path;
 
@@ -68,6 +72,8 @@ public final class Settings {
             shadows        = boolOf(p.getProperty("shadows"), shadows);
             ssao           = boolOf(p.getProperty("ssao"), ssao);
             showFps        = boolOf(p.getProperty("showFps"), showFps);
+            fov            = intOf(p.getProperty("fov"), fov);
+            weather        = boolOf(p.getProperty("weather"), weather);
             Log.info("Settings loaded from " + path);
         } catch (Exception e) {
             Log.warn("Settings unreadable - using defaults: " + e.getMessage());
@@ -86,6 +92,8 @@ public final class Settings {
         p.setProperty("shadows", String.valueOf(shadows));
         p.setProperty("ssao", String.valueOf(ssao));
         p.setProperty("showFps", String.valueOf(showFps));
+        p.setProperty("fov", String.valueOf(fov));
+        p.setProperty("weather", String.valueOf(weather));
         try {
             Path tmp = path.resolveSibling(path.getFileName() + ".tmp");
             try (OutputStream out = Files.newOutputStream(tmp)) { p.store(out, "ANHS Java Edition settings"); }

@@ -26,6 +26,11 @@ public final class Log {
 
     public static boolean isDev() { return DEV; }
 
+    /** macOS-only shell helpers (say/afplay/killall) are gated on this. */
+    public static boolean isMac() {
+        return System.getProperty("os.name", "").toLowerCase().contains("mac");
+    }
+
     public static void debug(String msg) { emit(Level.DEBUG, msg, null); }
     public static void info(String msg)  { emit(Level.INFO, msg, null); }
     public static void warn(String msg)  { emit(Level.WARN, msg, null); }

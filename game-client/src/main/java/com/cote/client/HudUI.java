@@ -14,19 +14,32 @@ import com.jme3.input.event.MouseButtonEvent;
 import com.jme3.input.event.MouseMotionEvent;
 import com.jme3.input.event.TouchEvent;
 import com.jme3.math.ColorRGBA;
+import com.cote.client.ui.UiKit;
 import com.cote.simulation.NPC;
 
 public class HudUI extends BaseAppState {
     private SimpleApplication app;
-    
+    private BitmapFont font;
+
     private BitmapText promptLabel;
     private com.jme3.scene.Geometry promptPanel;      // translucent pill behind prompts
-    
+    private com.jme3.scene.Geometry promptEdge;       // accent bar on the pill's left edge
+
     private BitmapText npcNameLabel;
     private BitmapText npcResponseLabel;
     private BitmapText playerInputLabel;
-    private com.jme3.scene.Geometry chatPanel;        // backdrop for the whole chat cluster
-    
+    private BitmapText historyLabel;
+    private BitmapText hintLabel;                     // key legend at the bottom of the chat box
+    // The chat box is one attached node: backdrop, accent edge, monogram, nameplate,
+    // mode badge, history, live exchange, input line, hint and the LEAVE button.
+    private com.jme3.scene.Node chatNode;
+    private com.jme3.scene.Geometry monogramQuad;     // colored square with the NPC's initial
+    private BitmapText monogramLabel;
+    private com.jme3.scene.Geometry modePill;         // small badge behind the mode text
+    private com.cote.client.ui.Widgets.Button leaveBtn;
+    private float caretT = 0f;                        // blinking input caret
+    private boolean caretOn = true;
+
     private boolean isDialogueActive = false;
     private NPC currentNpc = null;
     private StringBuilder currentInput = new StringBuilder();
@@ -36,8 +49,6 @@ public class HudUI extends BaseAppState {
     private BitmapText modeLabel;
     private NpcController npcController;      // set by Main, used to dispatch action commands
 
-    // Persistent chat log shown above the live exchange when a dialogue opens.
-    private BitmapText historyLabel;
     // NPC currently frozen by an active dialogue (resume-on-exit safety contract).
     private String frozenNpcId;
 
@@ -48,6 +59,7 @@ public class HudUI extends BaseAppState {
     private InteractiveElevator currentElevator = null;
     private BitmapText elevatorLabel;
     private com.jme3.scene.Geometry elevPanel;
+    private com.jme3.scene.Geometry elevEdge;
     private int elevatorSelection = 0;
     
     private RawInputListener textInputListener = new RawInputListener() {
@@ -55,8 +67,23 @@ public class HudUI extends BaseAppState {
         public void endInput() {}
         public void onJoyAxisEvent(JoyAxisEvent evt) {}
         public void onJoyButtonEvent(JoyButtonEvent evt) {}
-        public void onMouseMotionEvent(MouseMotionEvent evt) {}
-        public void onMouseButtonEvent(MouseButtonEvent evt) {}
+        public void onTouchEvent(TouchEvent evt) {}
+
+        public void onMouseMotionEvent(MouseMotionEvent evt) {
+            // Hover feedback on the LEAVE button while chatting.
+            if (isDialogueActive && leaveBtn != null)
+                com.cote.client.ui.Widgets.setHot(leaveBtn,
+                        com.cote.client.ui.Widgets.hits(leaveBtn, evt.getX(), evt.getY()));
+        }
+
+        public void onMouseButtonEvent(MouseButtonEvent evt) {
+            // Clicking LEAVE exits the conversation, same as ESC.
+            if (!isDialogueActive || !evt.isPressed() || evt.getButtonIndex() != 0) return;
+            if (leaveBtn != null && com.cote.client.ui.Widgets.hits(leaveBtn, evt.getX(), evt.getY())) {
+                closeDialogue();
+            }
+        }
+
         public void onKeyEvent(KeyInputEvent evt) {
             // Elevator panel: Up/Down arrows move the selection, Enter rides to it, Esc/E closes.
             if (isElevatorActive) {
@@ -80,63 +107,73 @@ public class HudUI extends BaseAppState {
             }
             if (!isDialogueActive || !evt.isPressed()) return;
 
-            if (evt.getKeyCode() == KeyInput.KEY_ESCAPE) {
+            int code = evt.getKeyCode();
+            if (code == KeyInput.KEY_ESCAPE) {
                 closeDialogue();
                 return;
             }
-            if (evt.getKeyCode() == KeyInput.KEY_TAB) {
+            if (code == KeyInput.KEY_TAB) {
                 actionMode = !actionMode;   // switch between normal chat and action chat
                 updateModeLabel();
+                refreshInputLine();
                 return;
             }
-            if (evt.getKeyCode() == KeyInput.KEY_RETURN) {
-                submitDialogue();
-            } else if (evt.getKeyCode() == KeyInput.KEY_BACK) {
+            if (code == KeyInput.KEY_RETURN) {
+                if (currentInput.length() > 0) submitDialogue(); // empty Enter is a no-op, not a close
+            } else if (code == KeyInput.KEY_BACK) {
                 if (currentInput.length() > 0) {
                     currentInput.deleteCharAt(currentInput.length() - 1);
-                    playerInputLabel.setText("> " + currentInput.toString() + "_");
+                    refreshInputLine();
                 }
-            } else if (evt.getKeyChar() != 0) {
+            } else if (evt.getKeyChar() != 0 && evt.getKeyChar() >= 32 && evt.getKeyChar() != 127) {
                 currentInput.append(evt.getKeyChar());
-                playerInputLabel.setText("> " + currentInput.toString() + "_");
+                refreshInputLine();
             }
         }
-        public void onTouchEvent(TouchEvent evt) {}
     };
     
     @Override
     protected void initialize(Application application) {
         this.app = (SimpleApplication) application;
-        
-        BitmapFont font = app.getAssetManager().loadFont("Interface/Fonts/Default.fnt");
-        
+
+        font = app.getAssetManager().loadFont("Interface/Fonts/Default.fnt");
+
         promptLabel = new BitmapText(font);
         promptLabel.setSize(font.getCharSet().getRenderedSize() * 1.5f);
         promptLabel.setColor(ColorRGBA.White);
-        
+
         npcNameLabel = new BitmapText(font);
-        npcNameLabel.setSize(font.getCharSet().getRenderedSize() * 2f);
-        npcNameLabel.setColor(ColorRGBA.Cyan);
-        
+        npcNameLabel.setSize(font.getCharSet().getRenderedSize() * 1.9f);
+        npcNameLabel.setColor(ColorRGBA.White);
+
         npcResponseLabel = new BitmapText(font);
         npcResponseLabel.setSize(font.getCharSet().getRenderedSize() * 1.5f);
         npcResponseLabel.setColor(ColorRGBA.White);
-        
+
         playerInputLabel = new BitmapText(font);
         playerInputLabel.setSize(font.getCharSet().getRenderedSize() * 1.5f);
-        playerInputLabel.setColor(ColorRGBA.Yellow);
+        playerInputLabel.setColor(new ColorRGBA(1f, 0.95f, 0.75f, 1f));
 
         elevatorLabel = new BitmapText(font);
         elevatorLabel.setSize(font.getCharSet().getRenderedSize() * 1.4f);
         elevatorLabel.setColor(ColorRGBA.White);
 
         modeLabel = new BitmapText(font);
-        modeLabel.setSize(font.getCharSet().getRenderedSize() * 1.3f);
-        modeLabel.setColor(new ColorRGBA(0.6f, 1f, 0.7f, 1f));
+        modeLabel.setSize(font.getCharSet().getRenderedSize() * 1.15f);
 
         historyLabel = new BitmapText(font);
-        historyLabel.setSize(font.getCharSet().getRenderedSize() * 1.2f);
-        historyLabel.setColor(new ColorRGBA(0.75f, 0.78f, 0.82f, 1f));
+        historyLabel.setSize(font.getCharSet().getRenderedSize() * 1.15f);
+        historyLabel.setColor(new ColorRGBA(0.72f, 0.76f, 0.83f, 1f));
+
+        monogramLabel = new BitmapText(font);
+        monogramLabel.setSize(font.getCharSet().getRenderedSize() * 2.4f);
+        monogramLabel.setColor(ColorRGBA.White);
+
+        hintLabel = new BitmapText(font);
+        hintLabel.setSize(font.getCharSet().getRenderedSize() * 1.05f);
+        hintLabel.setColor(new ColorRGBA(0.6f, 0.65f, 0.72f, 0.95f));
+
+        modePill = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 10, 10, new ColorRGBA(0f, 0f, 0f, 0f));
 
         app.getInputManager().addRawInputListener(textInputListener);
     }
@@ -157,6 +194,7 @@ public class HudUI extends BaseAppState {
         currentElevator = null;
         elevatorLabel.removeFromParent();
         if (elevPanel != null) { elevPanel.removeFromParent(); elevPanel = null; }
+        if (elevEdge != null) { elevEdge.removeFromParent(); elevEdge = null; }
     }
 
     private void refreshElevatorPanel() {
@@ -180,16 +218,20 @@ public class HudUI extends BaseAppState {
         float w = app.getCamera().getWidth();
         float h = app.getCamera().getHeight();
 
-        // Backdrop sized to the rendered text block.
+        // Backdrop sized to the rendered text block, with an amber accent edge.
         if (elevPanel != null) elevPanel.removeFromParent();
+        if (elevEdge != null) elevEdge.removeFromParent();
         float lines = sb.toString().split("\n", -1).length;
         float pw = Math.min(w * 0.5f, 420f);
         float ph = lines * elevatorLabel.getLineHeight() + 26;
         elevPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pw, ph,
                 new ColorRGBA(0.03f, 0.05f, 0.09f, 0.85f));
+        elevEdge = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 4f, ph, UiKit.ACCENT);
         app.getGuiNode().attachChild(elevPanel);       // behind
+        app.getGuiNode().attachChild(elevEdge);
         app.getGuiNode().attachChild(elevatorLabel);   // label above
         elevPanel.setLocalTranslation(w * 0.5f - 190, h * 0.72f - ph + 14, 0);
+        elevEdge.setLocalTranslation(w * 0.5f - 190, h * 0.72f - ph + 14, 0.05f);
         elevatorLabel.setLocalTranslation(w * 0.5f - 170, h * 0.72f, 1);
     }
 
@@ -217,24 +259,34 @@ public class HudUI extends BaseAppState {
             w / 2f - promptLabel.getLineWidth() / 2f, ly, 0
         );
         if (promptPanel != null) promptPanel.removeFromParent();
-        promptPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(),
-                Math.min(w * 0.7f, promptLabel.getLineWidth() + 40),
-                promptLabel.getLineHeight() + 18,
+        if (promptEdge != null) promptEdge.removeFromParent();
+        float pwid = Math.min(w * 0.7f, promptLabel.getLineWidth() + 40);
+        float phei = promptLabel.getLineHeight() + 18;
+        promptPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pwid, phei,
                 new ColorRGBA(0.03f, 0.05f, 0.09f, 0.8f));
+        promptEdge = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 3.5f, phei, UiKit.ACCENT);
         app.getGuiNode().attachChild(promptPanel);
-        app.getGuiNode().attachChild(promptLabel); // label renders above the pill
-        promptPanel.setLocalTranslation(w / 2f - Math.min(w * 0.7f, promptLabel.getLineWidth() + 40) / 2f,
-                ly - 12, 0);
+        app.getGuiNode().attachChild(promptEdge);   // amber accent on the pill's left edge
+        app.getGuiNode().attachChild(promptLabel);  // label renders above the pill
+        promptPanel.setLocalTranslation(w / 2f - pwid / 2f, ly - 12, 0);
+        promptEdge.setLocalTranslation(w / 2f - pwid / 2f, ly - 12, 0.05f);
     }
 
     public void hidePrompt() {
         if (promptPanel != null) { promptPanel.removeFromParent(); promptPanel = null; }
+        if (promptEdge != null) { promptEdge.removeFromParent(); promptEdge = null; }
         if (promptLabel.getParent() != null) {
             promptLabel.removeFromParent();
         }
     }
     
     public void openDialogue(NPC npc) { openDialogue(npc, "the campus", ""); }
+
+    /** Monogram colors cycled per NPC so regulars are visually distinct. */
+    private static final ColorRGBA[] MONOGRAM_COLORS = {
+            new ColorRGBA(0.78f, 0.28f, 0.32f, 1f), new ColorRGBA(0.28f, 0.52f, 0.85f, 1f),
+            new ColorRGBA(0.36f, 0.62f, 0.34f, 1f), new ColorRGBA(0.62f, 0.44f, 0.78f, 1f),
+            new ColorRGBA(0.85f, 0.62f, 0.24f, 1f), new ColorRGBA(0.30f, 0.64f, 0.60f, 1f)};
 
     public void openDialogue(NPC npc, String location, String time) {
         if (isDialogueActive) return;
@@ -243,44 +295,100 @@ public class HudUI extends BaseAppState {
         sceneLocation = location;
         sceneTime = time;
         hidePrompt();
-        
+
         // Freeze the NPC's schedule-driven movement for the duration of the chat.
         frozenNpcId = npc.getId();
         if (npcController != null) npcController.pauseNpc(frozenNpcId);
 
-        float w = app.getCamera().getWidth();
-        float h = app.getCamera().getHeight();
-        
+        float w = app.getCamera().getWidth(), h = app.getCamera().getHeight();
+        float pw = Math.min(520f, w * 0.40f);
+        float ph = h * 0.66f;
+        float px = w - pw - w * 0.025f;
+        float py = h * 0.155f;
+        float inner = 24f;
+        float contentW = pw - inner * 2f;
+
+        chatNode = new com.jme3.scene.Node("ChatBox");
+        app.getGuiNode().attachChild(chatNode);
+
+        // --- Frame: backdrop + amber left edge + top header band ---
+        com.jme3.scene.Geometry backdrop = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pw, ph,
+                new ColorRGBA(0.035f, 0.05f, 0.085f, 0.88f));
+        backdrop.setLocalTranslation(px, py, 0);
+        chatNode.attachChild(backdrop);
+
+        com.jme3.scene.Geometry edge = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 5f, ph, UiKit.ACCENT);
+        edge.setLocalTranslation(px, py, 0.05f);
+        chatNode.attachChild(edge);
+
+        com.jme3.scene.Geometry headerBand = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pw, 64f,
+                new ColorRGBA(0.06f, 0.09f, 0.14f, 0.9f));
+        headerBand.setLocalTranslation(px, py + ph - 64f, 0.04f);
+        chatNode.attachChild(headerBand);
+
+        com.jme3.scene.Geometry divider = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pw, 1.5f,
+                new ColorRGBA(1f, 0.80f, 0.35f, 0.35f));
+        divider.setLocalTranslation(px, py + ph - 64.5f, 0.05f);
+        chatNode.attachChild(divider);
+
+        // --- Monogram square + name + bond tag ---
+        ColorRGBA monoColor = MONOGRAM_COLORS[Math.abs(npc.getId().hashCode()) % MONOGRAM_COLORS.length];
+        monogramQuad = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 46f, 46f, monoColor);
+        monogramQuad.setLocalTranslation(px + inner, py + ph - 55f, 0.1f);
+        chatNode.attachChild(monogramQuad);
+        monogramLabel.setText(npc.getName().substring(0, 1).toUpperCase());
+        monogramLabel.setLocalTranslation(px + inner + 23f - monogramLabel.getLineWidth() / 2f,
+                py + ph - 20f, 0.15f);
+        chatNode.attachChild(monogramLabel);
+
         npcNameLabel.setText(npc.getName());
-        npcNameLabel.setLocalTranslation(w * 0.1f, h * 0.4f, 0);
-        
-        renderHistory(npc, w, h);
-        
+        npcNameLabel.setColor(monoColor);
+        npcNameLabel.setLocalTranslation(px + inner + 60f, py + ph - 20f, 0.1f);
+        chatNode.attachChild(npcNameLabel);
+
+        int affinity = com.cote.client.systems.Affinity.get(npc.getId());
+        String bond = affinity >= 25 ? "Close friend" : affinity >= 10 ? "Friend"
+                : affinity >= 4 ? "Familiar face" : affinity >= 1 ? "Acquaintance" : "Stranger";
+        BitmapText bondLabel = new BitmapText(font);
+        bondLabel.setSize(font.getCharSet().getRenderedSize() * 1.05f);
+        bondLabel.setColor(new ColorRGBA(0.62f, 0.68f, 0.76f, 1f));
+        bondLabel.setText(bond + "  ·  bond " + affinity + "  ·  " + (actionMode ? "ACTION" : "NORMAL") + " mode");
+        bondLabel.setLocalTranslation(px + inner + 60f, py + ph - 40f, 0.1f);
+        chatNode.attachChild(bondLabel);
+
+        // --- LEAVE button, top-right corner (mouse-clickable way out) ---
+        leaveBtn = com.cote.client.ui.Widgets.makeButton(app, chatNode, font, "LEAVE  [ESC]",
+                px + pw - 132f, py + ph - 52f, 116f, 34f);
+        leaveBtn.onFire = () -> { if (isDialogueActive) closeDialogue(); };
+
+        // --- Conversation history (previous turns, dimmed, top of body) ---
+        int histLines = layoutHistory(npc, px + inner, py + ph - 84f, contentW);
+
+        // --- Live reply (white, wrapped, above the mode row) ---
         npcResponseLabel.setText("...");
-        npcResponseLabel.setLocalTranslation(w * 0.1f, h * 0.4f - 40, 0);
-        
-        currentInput.setLength(0);
-        playerInputLabel.setText("> _");
-        playerInputLabel.setLocalTranslation(w * 0.1f, h * 0.4f - 100, 0);
+        npcResponseLabel.setColor(new ColorRGBA(0.55f, 0.58f, 0.64f, 1f));
+        npcResponseLabel.setLocalTranslation(px + inner,
+                Math.max(py + ph - 90f - histLines * historyLabel.getLineHeight(), py + ph * 0.52f), 0.1f);
+        chatNode.attachChild(npcResponseLabel);
 
-        modeLabel.setLocalTranslation(w * 0.1f, h * 0.4f - 140, 0);
+        // --- Mode pill + input line + hint legend ---
+        chatNode.attachChild(modePill);
+        chatNode.attachChild(modeLabel);
+        modeLabel.setLocalTranslation(px + inner, py + 78f, 0.15f);
         updateModeLabel();
+        modePill.setLocalTranslation(px + inner - 10f, py + 66f, 0.08f);
 
-        // Backdrop panel spanning the whole chat cluster (history grows upward into it).
-        if (chatPanel != null) chatPanel.removeFromParent();
-        int histLines = Math.min(12, ConversationMemory.get(npc.getId()).size());
-        float topY = h * 0.4f + 30f + (histLines > 0 ? histLines : 1) * historyLabel.getLineHeight() + 16f;
-        float botY = h * 0.4f - 170f;
-        chatPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), w * 0.56f, topY - botY,
-                new ColorRGBA(0.03f, 0.05f, 0.09f, 0.72f));
-        chatPanel.setLocalTranslation(w * 0.065f, botY, 0);
-        app.getGuiNode().attachChild(chatPanel); // first = behind the labels
+        currentInput.setLength(0);
+        caretOn = true;
+        caretT = 0f;
+        playerInputLabel.setLocalTranslation(px + inner, py + 46f, 0.1f);
+        chatNode.attachChild(playerInputLabel);
+        refreshInputLine();
 
-        app.getGuiNode().attachChild(npcNameLabel);
-        app.getGuiNode().attachChild(npcResponseLabel);
-        app.getGuiNode().attachChild(playerInputLabel);
-        app.getGuiNode().attachChild(modeLabel);
-        
+        hintLabel.setText("ENTER send   ·   TAB switch mode   ·   ESC leave");
+        hintLabel.setLocalTranslation(px + inner, py + 20f, 0.1f);
+        chatNode.attachChild(hintLabel);
+
         // Async initial greeting (remembers whether you've met before)
         new Thread(() -> {
             boolean metBefore = !ConversationMemory.get(npc.getId()).isEmpty();
@@ -290,36 +398,45 @@ public class HudUI extends BaseAppState {
             String resp = GeminiClient.generateResponse(buildContext(npc), opener);
             ConversationMemory.add(npc.getId(), "model", resp);
             app.enqueue(() -> {
-                npcResponseLabel.setText(resp);
-                speak(resp);
+                if (isDialogueActive && currentNpc == npc) {
+                    npcResponseLabel.setText(resp);
+                    npcResponseLabel.setColor(ColorRGBA.White);
+                    speak(resp);
+                }
             });
         }).start();
     }
-    
+
+    /** Left-aligned monospace-ish input line with a blinking caret. */
+    private void refreshInputLine() {
+        if (playerInputLabel == null) return;
+        playerInputLabel.setText("> " + currentInput + (caretOn ? "_" : " "));
+    }
+
     /**
-     * Pre-populate the chat log with this NPC's persisted transcript (oldest -> newest,
-     * same last-12-turn window ConversationMemory.asTranscript uses) above the live box.
-     * First-ever conversations have no history file and simply render nothing.
+     * Fill the dimmed history block (last 6 turns, wrapped) bottom-anchored at histBottomY.
+     * @return the number of rendered lines so the caller can stack the live reply below it.
      */
-    private void renderHistory(NPC npc, float w, float h) {
+    private int layoutHistory(NPC npc, float x, float histBottomY, float contentW) {
         java.util.List<String[]> hist = ConversationMemory.get(npc.getId());
-        int start = Math.max(0, hist.size() - 12);
+        int start = Math.max(0, hist.size() - 6);
         StringBuilder sb = new StringBuilder();
         for (int i = start; i < hist.size(); i++) {
             String[] t = hist.get(i);
-            sb.append("user".equals(t[0]) ? "Player: " : npc.getName() + ": ").append(t[1]).append("\n");
+            sb.append("user".equals(t[0]) ? "You: " : npc.getName() + ": ").append(t[1]).append("\n");
         }
         String text = sb.toString().trim();
-        historyLabel.setText(text);
-        if (text.isEmpty()) {          // first-ever chat: nothing to show
+        if (text.isEmpty()) {
+            historyLabel.setText("");
             historyLabel.removeFromParent();
-            return;
+            return 0;
         }
-        int lines = text.split("\n", -1).length;
-        // Anchor the block's top edge so its bottom sits just above the name label.
-        float topY = h * 0.4f + 30f + lines * historyLabel.getLineHeight();
-        historyLabel.setLocalTranslation(w * 0.1f, topY, 0);
-        if (historyLabel.getParent() == null) app.getGuiNode().attachChild(historyLabel);
+        String wrapped = com.cote.client.ui.UiKit.wrap(font, historyLabel.getSize(), text, contentW);
+        historyLabel.setText(wrapped);
+        int lines = wrapped.split("\n", -1).length;
+        historyLabel.setLocalTranslation(x, histBottomY + lines * historyLabel.getLineHeight(), 0.08f);
+        chatNode.attachChild(historyLabel);
+        return lines;
     }
 
     /** Single choke point for unfreezing: every dialogue exit must funnel through here or cleanup(). */
@@ -333,22 +450,22 @@ public class HudUI extends BaseAppState {
         isDialogueActive = false;
         currentNpc = null;
 
-        if (chatPanel != null) { chatPanel.removeFromParent(); chatPanel = null; }
-        npcNameLabel.removeFromParent();
-        npcResponseLabel.removeFromParent();
-        playerInputLabel.removeFromParent();
-        modeLabel.removeFromParent();
-        historyLabel.removeFromParent();
+        if (chatNode != null) { chatNode.removeFromParent(); chatNode = null; }
+        leaveBtn = null;
         stopSpeaking(); // don't keep talking after the conversation closes
         resumeFrozenNpc(); // never leave the NPC permanently frozen
     }
 
     private void updateModeLabel() {
-        modeLabel.setText(actionMode
-            ? "[TAB] Mode: ACTION  (ask them to go somewhere / do a task)"
-            : "[TAB] Mode: NORMAL  (just chatting)");
-        modeLabel.setColor(actionMode ? new ColorRGBA(1f, 0.8f, 0.4f, 1f)
-                                      : new ColorRGBA(0.6f, 1f, 0.7f, 1f));
+        modeLabel.setText(actionMode ? "ACTION — they can run errands" : "NORMAL — just chatting");
+        modeLabel.setColor(actionMode ? new ColorRGBA(1f, 0.82f, 0.45f, 1f)
+                                      : new ColorRGBA(0.62f, 1f, 0.72f, 1f));
+        if (modePill != null && modePill.getParent() != null) {
+            modePill.setMesh(new com.jme3.scene.shape.Quad(modeLabel.getLineWidth() + 26f, modeLabel.getLineHeight() + 8f));
+            com.cote.client.ui.UiKit.setColor(modePill, actionMode
+                    ? new ColorRGBA(0.30f, 0.22f, 0.08f, 0.85f)
+                    : new ColorRGBA(0.08f, 0.22f, 0.14f, 0.85f));
+        }
     }
 
     private void submitDialogue() {
@@ -359,12 +476,14 @@ public class HudUI extends BaseAppState {
         }
 
         currentInput.setLength(0);
-        playerInputLabel.setText("> _");
-        npcResponseLabel.setText("Thinking...");
+        refreshInputLine();
+        npcResponseLabel.setText("...");
+        npcResponseLabel.setColor(new ColorRGBA(0.55f, 0.58f, 0.64f, 1f)); // dimmed while thinking
 
         NPC npc = currentNpc;
         boolean action = actionMode;
         ConversationMemory.add(npc.getId(), "user", msg);
+        com.cote.client.systems.Affinity.add(npc.getId(), 1); // every exchange deepens the relationship
         new Thread(() -> {
             String raw = GeminiClient.generateResponse(buildContext(npc), msg);
             String reply = raw;
@@ -410,6 +529,13 @@ public class HudUI extends BaseAppState {
             sceneTime.isEmpty() ? "daytime" : sceneTime, sceneLocation,
             Landmarks.catalog(), transcript));
 
+        // Surrounding awareness: who else is standing here, and how well this NPC knows the player.
+        String nearby = npcController != null ? npcController.nearbyNames(npc.getId(), 6.0) : "";
+        if (!nearby.isEmpty())
+            sb.append("\n\nOthers nearby right now (you can see and hear them): ").append(nearby).append(".");
+        String relationship = com.cote.client.systems.Affinity.describe(npc.getId());
+        if (!relationship.isEmpty()) sb.append(' ').append(relationship);
+
         if (actionMode) {
             sb.append("\n\nACTION MODE IS ON. The player may ask you to physically do something on campus "
               + "(go somewhere, fetch water/food, head to the library, etc.). "
@@ -425,6 +551,7 @@ public class HudUI extends BaseAppState {
     private Process sayProc;
 
     private void speak(String text) {
+        if (!com.cote.client.systems.Log.isMac()) return; // macOS `say` TTS only; other platforms skip
         try {
             if (sayProc != null && sayProc.isAlive()) sayProc.destroy(); // stop the previous line
             sayProc = Runtime.getRuntime().exec(new String[]{"say", text});
@@ -434,33 +561,41 @@ public class HudUI extends BaseAppState {
     /** Silence any current/queued TTS (on dialogue close and app shutdown). */
     public void stopSpeaking() {
         try { if (sayProc != null) sayProc.destroyForcibly(); } catch (Exception ignored) {}
-        try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
+        if (com.cote.client.systems.Log.isMac()) {
+            try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
+        }
     }
 
     public boolean isDialogueActive() { return isDialogueActive; }
 
     private BitmapText flashLabel;
     private com.jme3.scene.Geometry flashPanel;
+    private com.jme3.scene.Geometry flashEdge;
     private float flashTimer = 0f;
 
     /** Brief top-of-screen notice, e.g. "Kushida arrived at the Library." */
     public void flash(String text) {
         if (flashLabel == null) {
-            flashLabel = new BitmapText(app.getAssetManager().loadFont("Interface/Fonts/Default.fnt"));
-            flashLabel.setSize(app.getAssetManager().loadFont("Interface/Fonts/Default.fnt").getCharSet().getRenderedSize() * 1.4f);
+            flashLabel = new BitmapText(font);
+            flashLabel.setSize(font.getCharSet().getRenderedSize() * 1.4f);
             flashLabel.setColor(new ColorRGBA(1f, 0.9f, 0.5f, 1f));
         }
         float w = app.getCamera().getWidth(), h = app.getCamera().getHeight();
         flashLabel.setText(text);
         float pw = Math.min(w * 0.9f, flashLabel.getLineWidth() + 44);
         float ph = flashLabel.getLineHeight() + 20;
-        // Rebuild pill to fit the text, attach it under the label.
+        // Rebuild pill to fit the text, attach it under the label with an accent edge.
         if (flashPanel != null) flashPanel.removeFromParent();
+        if (flashEdge != null) flashEdge.removeFromParent();
         flashPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pw, ph,
                 new ColorRGBA(0.03f, 0.05f, 0.09f, 0.82f));
+        flashEdge = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 4f, ph, UiKit.ACCENT);
         app.getGuiNode().attachChild(flashPanel);
+        app.getGuiNode().attachChild(flashEdge);
         app.getGuiNode().attachChild(flashLabel);
-        flashPanel.setLocalTranslation(w / 2f - pw / 2f, h - 60 - ph / 2f + 4, 0);
+        float bx = w / 2f - pw / 2f;
+        flashPanel.setLocalTranslation(bx, h - 60 - ph / 2f + 4, 0);
+        flashEdge.setLocalTranslation(bx, h - 60 - ph / 2f + 4, 0.05f);
         flashLabel.setLocalTranslation(w / 2f - flashLabel.getLineWidth() / 2f, h - 60, 1);
         flashTimer = 4.5f;
     }
@@ -471,7 +606,17 @@ public class HudUI extends BaseAppState {
             flashTimer -= tpf;
             if (flashTimer <= 0) {
                 if (flashLabel != null) flashLabel.removeFromParent();
-                if (flashPanel != null) flashPanel.removeFromParent();
+                if (flashPanel != null) { flashPanel.removeFromParent(); flashPanel = null; }
+                if (flashEdge != null) { flashEdge.removeFromParent(); flashEdge = null; }
+            }
+        }
+        // Blink the chat input caret while a conversation is open.
+        if (isDialogueActive) {
+            caretT += tpf;
+            if (caretT >= 0.53f) {
+                caretT = 0f;
+                caretOn = !caretOn;
+                refreshInputLine();
             }
         }
     }

@@ -6,6 +6,7 @@ import com.jme3.light.DirectionalLight;
 import com.jme3.material.Material;
 import com.jme3.math.ColorRGBA;
 import com.jme3.math.Vector3f;
+import com.cote.client.ui.UiKit;
 import com.jme3.scene.Geometry;
 import com.jme3.scene.shape.Box;
 import com.jme3.shadow.DirectionalLightShadowRenderer;
@@ -47,6 +48,10 @@ public class Main extends SimpleApplication {
 
     private float interactionCooldown = 0f;
     private com.jme3.font.BitmapText clockLabel;
+    private com.jme3.font.BitmapText pointsLabel;
+    private com.jme3.font.BitmapText scheduleLabel;
+    private long pointsShown = -1;        // HUD text refreshes only when the wallet changes
+    private String scheduleShown = "";
     private NpcController npcController;
     private MainMenuState menu;
     private com.cote.client.story.StoryManager story;
@@ -60,30 +65,64 @@ public class Main extends SimpleApplication {
     private final java.util.Set<String> lastFlags = new java.util.HashSet<>();
     private boolean lastModeWasStory = false;
 
+    // Life-sim state (persisted in the save slot).
+    private long points = 0;
+    private int lastDay = 1;
+    private int currentSlot = 1;
+    private float sprintBoostUntil = 0f;   // time (s) until the vending-machine coffee wears off
+    private String lastBellEventId = null; // school bell fires on schedule period transitions
+
+    // Sitting/rest on benches.
+    private boolean seated = false;
+    private Vector3f preSitPos = null;
+
+    // Photo mode: UI hidden, free camera, F9 captures.
+    private boolean photoMode = false;
+
+    // Atmosphere: weather cycle, night window lighting, player footsteps.
+    private final com.cote.client.systems.Weather weather = new com.cote.client.systems.Weather();
+    private com.jme3.effect.ParticleEmitter rainEmitter;
+    private float rainIntensity = 0f;
+    private float stepAccum = 0f;
+    private boolean stepFlip = false;
+    private final java.util.Map<com.jme3.scene.Geometry, com.jme3.material.Material> origWindowMats = new java.util.HashMap<>();
+    private final java.util.Map<com.jme3.scene.Geometry, com.jme3.material.Material> litWindowMats = new java.util.HashMap<>();
+    private boolean windowsLit = false;
+
     // Quad-based crosshair: dot + four ticks, tinted when something is interactable nearby.
     private com.jme3.scene.Node crosshair;
     private final java.util.List<com.jme3.scene.Geometry> crossParts = new java.util.ArrayList<>();
     private static final ColorRGBA CROSS_IDLE = new ColorRGBA(1f, 1f, 1f, 0.85f);
     private static final ColorRGBA CROSS_HOT = new ColorRGBA(1f, 0.80f, 0.35f, 1f);
 
+    private com.cote.client.ui.Compass compass;
+
     public static final java.util.List<InteractiveDoor> doors = new java.util.ArrayList<>();
     public static final java.util.List<InteractiveElevator> elevators = new java.util.ArrayList<>();
     @Override
     public void destroy() {
-        try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
+        if (com.cote.client.systems.Log.isMac()) {
+            try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
+        }
         super.destroy();
     }
 
     @Override
     public void simpleInitApp() {
         // Safety net: kill any lingering TTS if the JVM is shut down abruptly.
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
-        }));
+        if (com.cote.client.systems.Log.isMac()) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try { Runtime.getRuntime().exec(new String[]{"killall", "say"}); } catch (Exception ignored) {}
+            }));
+        }
+
+        // Bring pre-1.1 single-slot saves into slot 1 so Continue keeps working.
+        com.cote.client.systems.SaveSlots.migrateLegacyIfNeeded();
 
         // Setup camera and movement speed
         flyCam.setMoveSpeed(15f);
         cam.setLocation(new Vector3f(0, 1.5f, 5));
+        applyFov();
         // Debug overlays: dev builds show engine stats; release honors the user setting only.
         setDisplayFps(com.cote.client.systems.Log.isDev() || settingsRef.showFps);
         setDisplayStatView(com.cote.client.systems.Log.isDev());
@@ -118,19 +157,23 @@ public class Main extends SimpleApplication {
         
         
         com.jme3.post.FilterPostProcessor fpp = new com.jme3.post.FilterPostProcessor(assetManager);
-        
-        DirectionalLightShadowRenderer dlsr = new DirectionalLightShadowRenderer(assetManager, 2048, 3);
-        dlsr.setLight(sun);
-        dlsr.setEdgeFilteringMode(com.jme3.shadow.EdgeFilteringMode.PCFPOISSON);
-        dlsr.setShadowIntensity(0.45f); // softer, not pitch-black shadows
-        dlsr.setLambda(0.55f);          // tighter split distribution: more texel density near the camera
-        dlsr.setShadowZExtend(250f);    // cap shadow distance so cascades cover the playable area
-        dlsr.setEdgesThickness(2);
-        viewPort.addProcessor(dlsr);
+
+        if (settingsRef.shadows) {
+            DirectionalLightShadowRenderer dlsr = new DirectionalLightShadowRenderer(assetManager, 2048, 3);
+            dlsr.setLight(sun);
+            dlsr.setEdgeFilteringMode(com.jme3.shadow.EdgeFilteringMode.PCFPOISSON);
+            dlsr.setShadowIntensity(0.45f); // softer, not pitch-black shadows
+            dlsr.setLambda(0.55f);          // tighter split distribution: more texel density near the camera
+            dlsr.setShadowZExtend(250f);    // cap shadow distance so cascades cover the playable area
+            dlsr.setEdgesThickness(2);
+            viewPort.addProcessor(dlsr);
+        }
 
         // Ambient occlusion adds contact shadows/depth to the flat boxy geometry.
-        com.jme3.post.ssao.SSAOFilter ssao = new com.jme3.post.ssao.SSAOFilter(4.0f, 1.3f, 0.28f, 0.10f);
-        fpp.addFilter(ssao);
+        if (settingsRef.ssao) {
+            com.jme3.post.ssao.SSAOFilter ssao = new com.jme3.post.ssao.SSAOFilter(4.0f, 1.3f, 0.28f, 0.10f);
+            fpp.addFilter(ssao);
+        }
 
         // Subtle bloom. Kept BEFORE the fog pass so bright sources are extracted before haze flattens them.
         // ExposureCutOff zeroes every pixel whose average channel is below 0.85, so only near-white
@@ -176,10 +219,38 @@ public class Main extends SimpleApplication {
         groundMat.setColor("Diffuse", new ColorRGBA(0.85f, 0.83f, 0.78f, 1.0f));
         ground.setMaterial(groundMat);
         ground.setLocalTranslation(0, -0.1f, 0);
-        
+
         // Enable shadows on ground
         ground.setShadowMode(com.jme3.renderer.queue.RenderQueue.ShadowMode.Receive);
         rootNode.attachChild(ground);
+
+        // Ambient rain: thin velocity-aligned quads falling inside a box around the camera.
+        rainEmitter = new com.jme3.effect.ParticleEmitter("Rain", com.jme3.effect.ParticleMesh.Type.Triangle, 600);
+        com.jme3.material.Material rainMat = new com.jme3.material.Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+        rainMat.setColor("Color", new ColorRGBA(0.68f, 0.78f, 0.88f, 0.34f));
+        rainMat.getAdditionalRenderState().setBlendMode(com.jme3.material.RenderState.BlendMode.Alpha);
+        rainMat.getAdditionalRenderState().setFaceCullMode(com.jme3.material.RenderState.FaceCullMode.Off);
+        rainEmitter.setMaterial(rainMat);
+        rainEmitter.setImagesX(1);
+        rainEmitter.setImagesY(1);
+        rainEmitter.setStartSize(0.015f);
+        rainEmitter.setEndSize(0.015f);
+        rainEmitter.setStartColor(new ColorRGBA(0.7f, 0.8f, 0.9f, 0.4f));
+        rainEmitter.setEndColor(new ColorRGBA(0.7f, 0.8f, 0.9f, 0.12f));
+        rainEmitter.setGravity(0, -30f, 0);
+        rainEmitter.setLowLife(0.8f);
+        rainEmitter.setHighLife(1.3f);
+        rainEmitter.setVelocityVariation(0.06f);
+        rainEmitter.setFacingVelocity(true);
+        rainEmitter.setInWorldSpace(true);
+        rainEmitter.setShape(new com.jme3.effect.shapes.EmitterBoxShape(
+                new Vector3f(-16f, 2f, -16f), new Vector3f(16f, 7f, 16f)));
+        rainEmitter.setParticlesPerSec(0f); // starts clear; the Weather cycle drives this
+        rootNode.attachChild(rainEmitter);
+
+        // Remember original window materials so night lighting toggles back at dawn.
+        for (com.jme3.scene.Geometry g : CampusBuilder.NIGHT_WINDOWS) origWindowMats.put(g, g.getMaterial());
+        weather.setEnabled(settingsRef.weather);
         
         
         // Remove test rig from Phase 1 for now (or move it)
@@ -211,7 +282,8 @@ public class Main extends SimpleApplication {
                 "TimeBack", "TimeFwd", "TimeMorning", "TimeNoon", "TimeEvening", "TimeNight");
 
         inputManager.addMapping("Pause", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_ESCAPE));
-        inputManager.addListener(actionListener, "Pause");
+        inputManager.addMapping("Photo", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_P));
+        inputManager.addListener(actionListener, "Pause", "Photo");
         
         // 7. Initialize Simulation Engine (Phase 3) + NPC movement controller.
         engine = new com.cote.simulation.SimulationEngine();
@@ -225,6 +297,9 @@ public class Main extends SimpleApplication {
         // 9. Product systems: audio, pause menu, then the title screen.
         audio = new com.cote.client.systems.AudioManager(assetManager, settingsRef);
         audio.initialize();
+
+        // Screenshots: F12 captures anytime (photo mode hides the HUD for clean shots).
+        stateManager.attach(new com.jme3.app.state.ScreenshotAppState("screenshots"));
 
         pauseMenu = new PauseMenuState(this, settingsRef, audio, new PauseMenuState.Host() {
             @Override public void onPauseSaveGame() { saveGameNow(true); }
@@ -242,37 +317,87 @@ public class Main extends SimpleApplication {
     }
 
     private void openMainMenu() {
-        menu = new MainMenuState(this, settingsRef, audio, this::onMenuAction);
+        closeMainMenu(); // never stack a second title screen after quit-to-title
+        menu = new MainMenuState(this, settingsRef, audio, new MainMenuState.Callback() {
+            @Override public void onMenuAction(MainMenuState.Action action) { Main.this.onMenuAction(action); }
+            @Override public void onMenuLoadSlot(int slot) { loadSlot(slot); }
+        });
         stateManager.attach(menu);
+    }
+
+    /**
+     * Detach the title screen once a mode is chosen. The "title owns all input" gate
+     * in onAction checks menu.isEnabled(), which never turns false on its own —
+     * leaving the state attached would swallow WASD for the rest of the session.
+     */
+    private void closeMainMenu() {
+        if (menu != null) {
+            if (stateManager.getState(MainMenuState.class) != null) stateManager.detach(menu);
+            menu = null;
+        }
+    }
+
+    /** LOAD GAME picker: restore the chosen slot (only existing slots are clickable). */
+    private void loadSlot(int slot) {
+        closeMainMenu();
+        flyCam.setEnabled(true);
+        inputManager.setCursorVisible(false);
+        currentSlot = Math.max(1, slot);
+        com.cote.client.systems.GameSave s = com.cote.client.systems.SaveSlots.load(currentSlot);
+        if (s == null) {
+            hud.flash("Slot " + currentSlot + " could not be read.");
+            openMainMenu();
+            return;
+        }
+        points = s.points;
+        lastDay = s.day;
+        engine.setDay(s.day);
+        engine.setClockMin(s.clockMin);
+        if ("story".equals(s.mode)) startStory(s);
+        else startFreeRoam(new Vector3f(s.px, s.py, s.pz), s.yawDeg);
     }
 
     // ---------------------------------------------------------------- menu routing
 
     private void onMenuAction(MainMenuState.Action action) {
+        closeMainMenu();
         flyCam.setEnabled(true);
         inputManager.setCursorVisible(false); // capture pointer for FPS look
         switch (action) {
             case CONTINUE: {
-                com.cote.client.systems.GameSave s = com.cote.client.systems.GameSave.load();
+                currentSlot = com.cote.client.systems.SaveSlots.mostRecent();
+                com.cote.client.systems.GameSave s = com.cote.client.systems.SaveSlots.load(currentSlot);
                 if (s == null) {
                     hud.flash("Save could not be read - starting a new game.");
+                    grantStarterAllowance();
                     startFreeRoam(SPAWN, 0f);
-                } else if ("story".equals(s.mode)) {
-                    engine.setClockMin(s.clockMin);
-                    startStory(s);
                 } else {
+                    points = s.points;
+                    lastDay = s.day;
+                    engine.setDay(s.day);
                     engine.setClockMin(s.clockMin);
-                    startFreeRoam(new Vector3f(s.px, s.py, s.pz), s.yawDeg);
+                    if ("story".equals(s.mode)) startStory(s);
+                    else startFreeRoam(new Vector3f(s.px, s.py, s.pz), s.yawDeg);
                 }
                 break;
             }
             case FREE_ROAM:
+                grantStarterAllowance();
                 startFreeRoam(SPAWN, 0f);
                 break;
             case PLAY_STORY:
+                grantStarterAllowance();
                 startStory(null);
                 break;
         }
+    }
+
+    /** A fresh game opens with the standard 100,000-point monthly allowance (COTE canon). */
+    private void grantStarterAllowance() {
+        points = 100000;
+        lastDay = engine.getDay();
+        engine.setDay(lastDay);
+        hud.flash("Allowance deposited: 100,000 private points.");
     }
 
     private void startFreeRoam(Vector3f at, float yawDeg) {
@@ -286,6 +411,13 @@ public class Main extends SimpleApplication {
         lastModeWasStory = true;
         story = new com.cote.client.story.StoryManager(this, engine, npcController, resume);
         story.setAutosaveHook(() -> saveGameNow(false));
+        // The midterm pays out: 2,000 private points per correct answer.
+        story.setQuizRewardHook(score -> {
+            long reward = score * 2000L;
+            points += reward;
+            audio.play(com.cote.client.systems.AudioManager.Sfx.CHIME);
+            hud.flash("Exam graded: " + score + "/6 correct. +" + String.format("%,d", reward) + " private points.");
+        });
         stateManager.attach(story);
     }
 
@@ -310,12 +442,13 @@ public class Main extends SimpleApplication {
         }
         float[] angles = new float[3];
         cam.getRotation().toAngles(angles);
-        com.cote.client.systems.GameSave s = com.cote.client.systems.GameSave.blank();
+        com.cote.client.systems.GameSave s = com.cote.client.systems.GameSave.blankAt(
+                com.cote.client.systems.SaveSlots.slotPath(currentSlot));
         s.store(lastModeWasStory ? "story" : "freeroam",
                 cam.getLocation(), (float) Math.toDegrees(angles[1]), engine.getClockMin(),
-                lastChapterIdx, lastStepIdx, lastFlags);
+                lastChapterIdx, lastStepIdx, lastFlags, engine.getDay(), points);
         if (userInitiated) {
-            hud.flash("Game saved.");
+            hud.flash("Game saved. (slot " + currentSlot + ")");
             audio.play(com.cote.client.systems.AudioManager.Sfx.CHIME);
             if (pauseMenu != null && stateManager.getState(PauseMenuState.class) != null) pauseMenu.flashSaved();
         }
@@ -357,13 +490,38 @@ public class Main extends SimpleApplication {
     
     private HudUI hud;
     private com.cote.simulation.NPC nearestNpc = null;
+
+    // Passing greetings: characters who know the player (affinity) call out briefly when walked past.
+    private static final java.util.Map<String, String> GREETINGS = new java.util.HashMap<>();
+    static {
+        GREETINGS.put("horikita", "Hmph. Don't you have something better to do?");
+        GREETINGS.put("kushida", "Ah, Ayanokouji-kun! Catch you later, okay?");
+        GREETINGS.put("sudou", "Tch. Can't talk — the court is calling.");
+        GREETINGS.put("kouenji", "Ah, a commoner. Do enjoy basking in my presence.");
+        GREETINGS.put("chabashira", "Keep moving. Loitering is not an extracurricular.");
+        GREETINGS.put("hirata", "Oh, hey! Good to see you. Take care of yourself, alright?");
+        GREETINGS.put("karuizawa", "Hmm? Oh — it's you. Try not to be boring today.");
+        GREETINGS.put("yukimura", "N-not now! I'm in the middle of a chapter...!");
+        GREETINGS.put("sakura", "...! U-um... h-hello...");
+        GREETINGS.put("ike", "Bro! The cafeteria has curry today! CURRY!");
+        GREETINGS.put("yamauchi", "Yo. Between us? Karuizawa glanced this way. I felt it.");
+    }
+    private final java.util.Map<String, Float> greetCooldown = new java.util.HashMap<>();
     
     private void onAction(String name, boolean isPressed, float tpf) {
         // ESC toggles the pause menu whenever no other screen owns it.
         if (isPressed && "Pause".equals(name)) {
+            if (photoMode) { togglePhotoMode(); return; } // ESC leaves photo mode first
             boolean pauseOpen = stateManager.getState(PauseMenuState.class) != null;
             if (pauseOpen) togglePause();
             else if (!anyUiBlocking()) togglePause();
+            return;
+        }
+
+        // P toggles photo mode (UI hidden, free camera); F12 captures via ScreenshotAppState.
+        if (isPressed && "Photo".equals(name)) {
+            if (photoMode) togglePhotoMode();
+            else if (!anyUiBlocking()) togglePhotoMode();
             return;
         }
 
@@ -417,10 +575,14 @@ public class Main extends SimpleApplication {
         if (name.equals("Sprint")) sprint = isPressed;
 
         if (name.equals("Interact") && isPressed) {
+            if (seated) { standUp(); return; }
             if (nearestNpc != null) {
                 hud.openDialogue(nearestNpc, describeLocation(cam.getLocation()), engine.getFormattedTime());
                 return;
             }
+            // Bench: sit and rest (the clock runs 8x while seated).
+            float[] bench = nearestBench(cam.getLocation(), 2.0f);
+            if (bench != null) { sitDown(bench); return; }
             // Elevator: open by PROXIMITY. Raycasting a floor-level platform never hits
             // (the ray points forward, the platform is at your feet), so use distance instead.
             Vector3f pp = cam.getLocation();
@@ -443,11 +605,19 @@ public class Main extends SimpleApplication {
                     while (s != null) {
                         String sn = s.getName();
                         if (sn != null) {
+                            if (sn.equals("VendingMachine")) { buyDrink(); return; }
                             for (InteractiveDoor d : doors) if (d.label.equals(sn)) {
                                 if (d.requiresKnock && !d.knocked && !d.isOpen) {
                                     d.knocked = true;
                                     knock();
-                                    hud.showActionPrompt("*knock knock*  -- press E again to enter");
+                                    // If the room's resident is home, they answer and open up themselves.
+                                    com.cote.simulation.NPC resident = dormResidentFor(d.label);
+                                    if (resident != null && npcController.isHomeAsleep(resident.getId())) {
+                                        hud.flash(resident.getName() + ": \"...It's open. Come in.\"");
+                                        d.interact();
+                                    } else {
+                                        hud.showActionPrompt("*knock knock*  -- press E again to enter");
+                                    }
                                 } else {
                                     d.interact();
                                 }
@@ -485,6 +655,34 @@ public class Main extends SimpleApplication {
         clockLabel.setColor(new ColorRGBA(1f, 1f, 0.85f, 1f));
         clockLabel.setLocalTranslation(14, settings.getHeight() - 10, 0);
         guiNode.attachChild(clockLabel);
+
+        // Framed info panel behind the clock/schedule/wallet cluster.
+        com.jme3.scene.Geometry infoPanel = com.cote.client.ui.UiKit.panel(assetManager, 340f, 74f,
+                new ColorRGBA(0.03f, 0.05f, 0.09f, 0.6f));
+        infoPanel.setLocalTranslation(8, settings.getHeight() - 82, 0);
+        guiNode.attachChild(infoPanel);
+        com.jme3.scene.Geometry infoEdge = com.cote.client.ui.UiKit.panel(assetManager, 4f, 74f, UiKit.ACCENT);
+        infoEdge.setLocalTranslation(8, settings.getHeight() - 82, 0.05f);
+        guiNode.attachChild(infoEdge);
+
+        // Current schedule period + day, under the clock.
+        scheduleLabel = new com.jme3.font.BitmapText(guiFont, false);
+        scheduleLabel.setSize(guiFont.getCharSet().getRenderedSize() * 1.0f);
+        scheduleLabel.setColor(new ColorRGBA(0.72f, 0.82f, 0.95f, 0.95f));
+        scheduleLabel.setLocalTranslation(14, settings.getHeight() - 30, 0);
+        guiNode.attachChild(scheduleLabel);
+
+        // Private points wallet.
+        pointsLabel = new com.jme3.font.BitmapText(guiFont, false);
+        pointsLabel.setSize(guiFont.getCharSet().getRenderedSize() * 1.05f);
+        pointsLabel.setColor(new ColorRGBA(1f, 0.85f, 0.4f, 1f));
+        pointsLabel.setLocalTranslation(14, settings.getHeight() - 48, 0);
+        guiNode.attachChild(pointsLabel);
+
+        // Compass tape with landmark + objective markers.
+        compass = new com.cote.client.ui.Compass();
+        compass.init(assetManager, guiFont, settings.getWidth(), settings.getHeight());
+        guiNode.attachChild(compass.node());
     }
 
     private void addCrossPart(float x, float y, float w, float h) {
@@ -519,11 +717,46 @@ public class Main extends SimpleApplication {
             clockLabel.setText(engine.getFormattedTime() + "   " + phaseName(cm));
         }
 
-        // Movement is locked during dialogue, elevator, pause menu or story screens.
+        // School bell: one chime + toast whenever the schedule changes period.
+        if (engine != null && audio != null) {
+            com.cote.simulation.ScheduleEvent evt = engine.getCurrentEvent();
+            String evtId = evt != null ? evt.getId() : null;
+            if (evtId != null && !evtId.equals(lastBellEventId)) {
+                if (lastBellEventId != null) {
+                    audio.play(com.cote.client.systems.AudioManager.Sfx.CHIME);
+                    hud.flash("Period changed: " + evt.getLabel());
+                }
+                lastBellEventId = evtId;
+            }
+        }
+
+        // Monthly allowance on day rollover (COTE: points land on the 1st; a day here is a month there).
+        if (engine != null && engine.getDay() != lastDay) {
+            lastDay = engine.getDay();
+            points += 100000;
+            audio.play(com.cote.client.systems.AudioManager.Sfx.CHIME);
+            hud.flash("New month: allowance deposited. +100,000 private points.");
+        }
+
+        // Wallet + schedule line refresh (only when the text would change).
+        if (pointsLabel != null && points != pointsShown) {
+            pointsShown = points;
+            pointsLabel.setText("PT " + String.format("%,d", points));
+        }
+        if (scheduleLabel != null && engine != null) {
+            com.cote.simulation.ScheduleEvent evt = engine.getCurrentEvent();
+            String line = "Day " + engine.getDay() + (evt != null ? "  ·  " + evt.getLabel() : "");
+            if (!line.equals(scheduleShown)) {
+                scheduleShown = line;
+                scheduleLabel.setText(line);
+            }
+        }
+
+        // Movement is locked during dialogue, elevator, pause menu, story screens or while seated.
         boolean pauseOpen = stateManager.getState(PauseMenuState.class) != null;
         boolean storyBlocking = story != null && story.isUiBlocking();
         boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()))
-                || storyBlocking || pauseOpen;
+                || storyBlocking || pauseOpen || seated || photoMode;
         if (!uiLock) {
             Vector3f pos = cam.getLocation();
             final float radius = 0.4f, playerHeight = 1.8f, eyeHeight = 1.4f, stepHeight = 0.6f;
@@ -563,6 +796,7 @@ public class Main extends SimpleApplication {
 
             if (walkDirection.lengthSquared() > 0) {
                 float speed = sprint ? 12.0f : 6.0f; // hold Left-Shift to sprint
+                if (time < sprintBoostUntil) speed *= 1.15f; // vending-machine coffee
                 walkDirection.normalizeLocal().multLocal(speed * tpf);
                 float fY = pos.y - eyeHeight;
                 float nextX = pos.x + walkDirection.x;
@@ -578,12 +812,39 @@ public class Main extends SimpleApplication {
                 if (!collidesZ) pos.z = nextZ;
 
                 cam.setLocation(pos);
+
+                // Footsteps: one sound per stride length of real movement, alternating feet.
+                stepAccum += speed * tpf;
+                float stride = sprint ? 2.2f : 1.8f;
+                if (stepAccum >= stride) {
+                    stepAccum -= stride;
+                    stepFlip = !stepFlip;
+                    audio.play(stepFlip ? com.cote.client.systems.AudioManager.Sfx.STEP_A
+                                        : com.cote.client.systems.AudioManager.Sfx.STEP_B);
+                }
+            } else {
+                stepAccum = 0f; // stalled against a wall: don't bank up a burst of steps
             }
         }
         
         // Tick Engine (schedule/personality brain), then walk NPCs along routes.
+        // Resting on a bench fast-forwards the clock 8x — the legit way to pass story WAIT steps.
         time += tpf;
-        engine.tick(tpf);
+        engine.tick(seated ? tpf * 8f : tpf);
+
+        // Weather cycle: drives the particle rain, its audio level, and the
+        // atmosphere darkening applied inside applyTimeOfDay.
+        rainIntensity = weather.update(tpf);
+        if (rainEmitter != null) {
+            rainEmitter.setParticlesPerSec(rainIntensity * 550f);
+            if (rainIntensity > 0.01f)
+                rainEmitter.setLocalTranslation(cam.getLocation().add(new Vector3f(0, 4f, 0)));
+        }
+        if (audio != null) {
+            audio.update(tpf);
+            audio.setRainIntensity(rainIntensity);
+            audio.setMusicPhase(musicPhaseFromClock(engine.getClockMin()));
+        }
         if (npcController != null) npcController.update(tpf);
         
         // Update NPCs and find nearest
@@ -661,6 +922,16 @@ public class Main extends SimpleApplication {
                 nearestNpc = npc;
             }
 
+            // Passing greeting: once we have talked a few times, a nearby character calls out.
+            float cd = greetCooldown.getOrDefault(npc.getId(), 0f);
+            if (cd > 0f) {
+                greetCooldown.put(npc.getId(), Math.max(0f, cd - tpf));
+            } else if (dst < 3.5f && com.cote.client.systems.Affinity.get(npc.getId()) >= 3
+                    && !anyUiBlocking()) {
+                hud.flash(npc.getName() + ": \"" + GREETINGS.getOrDefault(npc.getId(), "...") + "\"");
+                greetCooldown.put(npc.getId(), 120f); // at most one line per NPC every 2 minutes
+            }
+
             // Announce when an NPC finishes a player-commanded errand.
             String arrived = npcController.pollArrival(npc.getId());
             if (arrived != null && hud != null) hud.flash(npc.getName() + " arrived at " + arrived + ".");
@@ -675,7 +946,9 @@ public class Main extends SimpleApplication {
         
         if (hud != null && !hud.isDialogueActive() && !hud.isElevatorActive()
                 && !(story != null && story.isUiBlocking())) {
-            if (nearestNpc != null) {
+            if (seated) {
+                hud.showActionPrompt("E - stand up  ·  time passes faster while resting");
+            } else if (nearestNpc != null) {
                 hud.showPrompt(nearestNpc.getName());
             } else {
                 // Prompt when standing near an elevator car.
@@ -697,12 +970,18 @@ public class Main extends SimpleApplication {
         boolean menuOpen = menu != null && menu.isEnabled();
         boolean chatOpen = hud != null && (hud.isDialogueActive() || hud.isElevatorActive());
         boolean storyBlock = story != null && story.isUiBlocking();
+        boolean gameplayUiHidden = menuOpen || chatOpen || storyBlock || photoMode;
         if (crosshair != null) {
-            boolean vis = !menuOpen && !chatOpen && !storyBlock;
+            boolean vis = !gameplayUiHidden;
             crosshair.setCullHint(vis ? com.jme3.scene.Spatial.CullHint.Inherit
                                       : com.jme3.scene.Spatial.CullHint.Always);
             if (vis && nearestNpc != null) setCrossTint(CROSS_HOT);
             else if (vis) setCrossTint(CROSS_IDLE);
+        }
+        // Compass tape follows the same visibility rules.
+        if (compass != null) {
+            compass.update(cam.getLocation(), cam.getDirection(),
+                    story != null ? story.activeGotoTarget() : null, !gameplayUiHidden);
         }
     }
 
@@ -762,6 +1041,16 @@ public class Main extends SimpleApplication {
         ColorRGBA ambC = mix(TOD_AMB, i, t);
         float fogD = TOD_FOGD[i] + (TOD_FOGD[i + 1] - TOD_FOGD[i]) * t;
         float expo = TOD_EXPO[i] + (TOD_EXPO[i + 1] - TOD_EXPO[i]) * t;
+
+        // Rain darkens and thickens the air before anything is applied.
+        if (rainIntensity > 0.001f) {
+            float d = 1f - 0.5f * rainIntensity;
+            sky = sky.mult(d);
+            sunC = sunC.mult(1f - 0.55f * rainIntensity);
+            ambC = ambC.mult(1f - 0.3f * rainIntensity);
+            fogD += 0.018f * rainIntensity;
+        }
+
         Vector3f dir = new Vector3f(
                 TOD_DIR[i][0] + (TOD_DIR[i + 1][0] - TOD_DIR[i][0]) * t,
                 TOD_DIR[i][1] + (TOD_DIR[i + 1][1] - TOD_DIR[i][1]) * t,
@@ -780,15 +1069,136 @@ public class Main extends SimpleApplication {
         if (sunDisc != null && cam != null) {
             sunDisc.setLocalTranslation(cam.getLocation().subtract(dir.mult(SUN_DISC_DIST)));
         }
+
+        // Building windows glow warm after dusk (18:00) and go dark at dawn (06:00).
+        setWindowsLit(clockMin >= 1080f || clockMin < 360f);
+    }
+
+    private static final ColorRGBA WINDOW_GLOW = new ColorRGBA(1.75f, 1.4f, 0.8f, 1f);
+
+    /** Swap every registered window between its daytime material and a bright glow material. */
+    private void setWindowsLit(boolean lit) {
+        if (lit == windowsLit) return;
+        windowsLit = lit;
+        for (com.jme3.scene.Geometry g : CampusBuilder.NIGHT_WINDOWS) {
+            if (lit) {
+                Material m = litWindowMats.get(g);
+                if (m == null) {
+                    // Unshaded with >1 color: luminance passes the bloom cutoff, so windows glow.
+                    m = new Material(assetManager, "Common/MatDefs/Misc/Unshaded.j3md");
+                    m.setColor("Color", WINDOW_GLOW);
+                    m.getAdditionalRenderState().setBlendMode(com.jme3.material.RenderState.BlendMode.Alpha);
+                    litWindowMats.put(g, m);
+                }
+                g.setMaterial(m);
+            } else {
+                Material orig = origWindowMats.get(g);
+                if (orig != null) g.setMaterial(orig);
+            }
+        }
+    }
+
+    /** Which ambient music bed matches the clock (0 morning, 1 noon, 2 evening, 3 night). */
+    private int musicPhaseFromClock(double cm) {
+        if (cm < 360) return 3;       // night
+        if (cm < 720) return 0;       // morning
+        if (cm < 1020) return 1;      // midday
+        if (cm < 1260) return 2;      // evening
+        return 3;                     // night
+    }
+
+    // ---------------------------------------------------------------- photo mode
+
+    private void togglePhotoMode() {
+        photoMode = !photoMode;
+        // guiNode holds every HUD/menu element: hiding it clears the frame for the shot.
+        guiNode.setCullHint(photoMode ? com.jme3.scene.Spatial.CullHint.Always
+                                      : com.jme3.scene.Spatial.CullHint.Inherit);
+        flyCam.setMoveSpeed(photoMode ? 30f : 0f);
+        forward = backward = left = right = false;
+        if (photoMode) {
+            audio.play(com.cote.client.systems.AudioManager.Sfx.CLICK);
+            com.cote.client.systems.Log.info("Photo mode enabled (F12 captures to screenshots/).");
+        }
+    }
+
+    /** Apply the persisted field of view to the camera. */
+    private void applyFov() {
+        float fovDeg = Math.max(45f, Math.min(100f, settingsRef.fov));
+        cam.setFrustumPerspective(fovDeg, (float) cam.getWidth() / cam.getHeight(), 0.05f, 1000f);
     }
 
     private void knock() {
-        try { Runtime.getRuntime().exec(new String[]{"afplay", "/System/Library/Sounds/Tink.aiff"}); } catch (Exception ignored) {}
+        if (com.cote.client.systems.Log.isMac()) {
+            try { Runtime.getRuntime().exec(new String[]{"afplay", "/System/Library/Sounds/Tink.aiff"}); } catch (Exception ignored) {}
+        } else {
+            audio.play(com.cote.client.systems.AudioManager.Sfx.KNOCK);
+        }
+    }
+
+    /** The NPC assigned to the dorm room behind a "Door_Dorm_<floor>" door, or null for other doors. */
+    private com.cote.simulation.NPC dormResidentFor(String doorLabel) {
+        if (npcController == null || doorLabel == null || !doorLabel.startsWith("Door_Dorm_")) return null;
+        try {
+            int floor = Integer.parseInt(doorLabel.substring("Door_Dorm_".length()));
+            String id = npcController.npcOnDormFloor(floor);
+            return id == null ? null : findNpcById(id);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private com.cote.simulation.NPC findNpcById(String id) {
+        for (com.cote.simulation.NPC n : engine.getNpcs()) if (n.getId().equals(id)) return n;
+        return null;
+    }
+
+    // ---------------------------------------------------------------- sit & rest
+
+    /** Closest registered bench within radius, as {x, z, yawDeg}, or null. */
+    private float[] nearestBench(Vector3f p, float radius) {
+        float[] best = null;
+        float bestD2 = radius * radius;
+        for (float[] b : CampusBuilder.BENCHES) {
+            float dx = p.x - b[0], dz = p.z - b[1];
+            float d2 = dx * dx + dz * dz;
+            if (d2 <= bestD2) { bestD2 = d2; best = b; }
+        }
+        return best;
+    }
+
+    private void sitDown(float[] bench) {
+        seated = true;
+        preSitPos = cam.getLocation().clone();
+        cam.setLocation(new Vector3f(bench[0], 1.05f, bench[1]));
+        cam.setRotation(new com.jme3.math.Quaternion().fromAngles(0, (float) Math.toRadians(bench[2]), 0));
+        forward = backward = left = right = false;
+        audio.play(com.cote.client.systems.AudioManager.Sfx.PAGE);
+    }
+
+    private void standUp() {
+        seated = false;
+        if (preSitPos != null) cam.setLocation(preSitPos);
+        preSitPos = null;
+        audio.play(com.cote.client.systems.AudioManager.Sfx.PAGE);
+    }
+
+    // ---------------------------------------------------------------- vending machine
+
+    private void buyDrink() {
+        if (points >= 150) {
+            points -= 150;
+            sprintBoostUntil = time + 60f;
+            audio.play(com.cote.client.systems.AudioManager.Sfx.CHIME);
+            hud.flash("Iced coffee acquired. -150 pts  ·  +15% sprint speed for 60s.");
+        } else {
+            audio.play(com.cote.client.systems.AudioManager.Sfx.BACK);
+            hud.flash("Not enough points. This school runs on merit, after all.");
+        }
     }
 
     /** Human-readable description of where the player is, for NPC dialogue context. */
-    private String describeLocation(Vector3f p) {
-        float x = p.x, z = p.z;
+    private String describeLocation(Vector3f p) {        float x = p.x, z = p.z;
         if (x > -48 && x < -20 && z > 44 && z < 72) return dormFloor(p) ;
         if (x > -31 && x < 31 && z > -70 && z < -42) {
             int fl = Math.max(0, Math.round((p.y - 1.4f) / 4.25f));

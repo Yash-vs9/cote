@@ -26,7 +26,11 @@ public class MainMenuState extends BaseAppState {
 
     public enum Action { CONTINUE, FREE_ROAM, PLAY_STORY }
 
-    public interface Callback { void onMenuAction(Action action); }
+    public interface Callback {
+        void onMenuAction(Action action);
+        /** Player picked a concrete slot from the LOAD GAME picker. */
+        void onMenuLoadSlot(int slot);
+    }
 
     private final SimpleApplication app;
     private final Callback callback;
@@ -39,8 +43,11 @@ public class MainMenuState extends BaseAppState {
 
     private Geometry dimmer, titleRule, panel;
     private BitmapText titleLabel, subtitleLabel, progressLabel, versionLabel;
-    private Widgets.Button btnContinue, btnRoam, btnStory, btnSettings, btnCredits, btnQuit;
+    private Widgets.Button btnContinue, btnLoad, btnRoam, btnStory, btnSettings, btnCredits, btnQuit;
     private java.util.List<Widgets.Button> nav = new java.util.ArrayList<>();
+    private final java.util.List<Widgets.Button> mainNav = new java.util.ArrayList<>();
+    private Node pickerNode;
+    private boolean pickerOpen = false;
     private int keyIndex = -1;
     private boolean decided = false;
 
@@ -81,27 +88,32 @@ public class MainMenuState extends BaseAppState {
                 new ColorRGBA(0.65f, 0.9f, 1f, 1f), saveSummary(), w / 2f, h * 0.795f);
 
         // Buttons
-        float bw = pw - 70f, bh = h * 0.072f, bx = w / 2f - bw / 2f;
+        float bw = pw - 70f, bh = h * 0.066f, bx = w / 2f - bw / 2f;
         float y = h * 0.685f;
-        boolean hasSave = GameSave.exists() || GameSave.legacyExists();
+        boolean hasSave = com.cote.client.systems.SaveSlots.anyExists() || GameSave.legacyExists();
 
         btnContinue = Widgets.makeButton(app, ui, font, "CONTINUE", bx, y, bw, bh);
         Widgets.setDisabled(btnContinue, !hasSave);
-        y -= bh + h * 0.018f;
-        btnRoam = Widgets.makeButton(app, ui, font, "FREE ROAM", bx, y, bw, bh); y -= bh + h * 0.018f;
-        btnStory = Widgets.makeButton(app, ui, font, "PLAY STORY", bx, y, bw, bh); y -= bh + h * 0.018f;
-        btnSettings = Widgets.makeButton(app, ui, font, "SETTINGS", bx, y, bw, bh); y -= bh + h * 0.018f;
-        btnCredits = Widgets.makeButton(app, ui, font, "CREDITS", bx, y, bw, bh); y -= bh + h * 0.018f;
+        y -= bh + h * 0.016f;
+        btnLoad = Widgets.makeButton(app, ui, font, "LOAD GAME", bx, y, bw, bh);
+        Widgets.setDisabled(btnLoad, !hasSave);
+        y -= bh + h * 0.016f;
+        btnRoam = Widgets.makeButton(app, ui, font, "FREE ROAM", bx, y, bw, bh); y -= bh + h * 0.016f;
+        btnStory = Widgets.makeButton(app, ui, font, "PLAY STORY", bx, y, bw, bh); y -= bh + h * 0.016f;
+        btnSettings = Widgets.makeButton(app, ui, font, "SETTINGS", bx, y, bw, bh); y -= bh + h * 0.016f;
+        btnCredits = Widgets.makeButton(app, ui, font, "CREDITS", bx, y, bw, bh); y -= bh + h * 0.016f;
         btnQuit = Widgets.makeButton(app, ui, font, "QUIT", bx, y, bw, bh);
 
-        nav = new java.util.ArrayList<>(java.util.Arrays.asList(
-                btnContinue, btnRoam, btnStory, btnSettings, btnCredits, btnQuit));
+        mainNav.addAll(java.util.Arrays.asList(
+                btnContinue, btnLoad, btnRoam, btnStory, btnSettings, btnCredits, btnQuit));
+        nav = mainNav;
 
         versionLabel = bigLabel(font.getCharSet().getRenderedSize() * 0.95f,
                 new ColorRGBA(0.5f, 0.53f, 0.57f, 1f),
                 Version.LINE + "   |   " + Version.PLATFORM, w / 2f, h * 0.045f);
 
         btnContinue.onFire = () -> fire(Action.CONTINUE);
+        btnLoad.onFire = () -> { if (!decided) { audio.play(AudioManager.Sfx.CLICK); openSlotPicker(); } };
         btnRoam.onFire = () -> fire(Action.FREE_ROAM);
         btnStory.onFire = () -> fire(Action.PLAY_STORY);
         btnSettings.onFire = () -> openSettings();
@@ -119,9 +131,61 @@ public class MainMenuState extends BaseAppState {
     }
 
     private String saveSummary() {
-        if (GameSave.exists()) return "A saved game was found.";
-        if (GameSave.legacyExists()) return "An older story save was found and will be upgraded.";
+        if (com.cote.client.systems.SaveSlots.anyExists() || GameSave.legacyExists()) return "A saved game was found.";
         return "No saved games yet.";
+    }
+
+    // ---------------------------------------------------------------- load picker
+
+    private void openSlotPicker() {
+        pickerOpen = true;
+        keyIndex = -1;
+        float w = app.getCamera().getWidth(), h = app.getCamera().getHeight();
+        pickerNode = new Node("LoadPicker");
+        Geometry dim = UiKit.panel(app.getAssetManager(), w, h, new ColorRGBA(0.01f, 0.02f, 0.04f, 0.72f));
+        dim.setLocalTranslation(0, 0, 1);
+        pickerNode.attachChild(dim);
+
+        BitmapText title = new BitmapText(font);
+        title.setSize(font.getCharSet().getRenderedSize() * 1.9f);
+        title.setColor(ColorRGBA.White);
+        title.setText("LOAD GAME");
+        title.setLocalTranslation(w / 2f - title.getLineWidth() / 2f, h * 0.68f, 2);
+        pickerNode.attachChild(title);
+
+        java.util.List<Widgets.Button> picker = new java.util.ArrayList<>();
+        float bw = Math.min(560f, w * 0.52f), bh = h * 0.085f, bx = w / 2f - bw / 2f;
+        float y = h * 0.52f;
+        for (int slot = 1; slot <= com.cote.client.systems.SaveSlots.COUNT; slot++) {
+            final int s = slot;
+            String summary = com.cote.client.systems.SaveSlots.summary(s);
+            Widgets.Button b = Widgets.makeButton(app, pickerNode, font,
+                    "SLOT " + s + "   " + summary, bx, y, bw, bh);
+            Widgets.setDisabled(b, summary.equals("(empty)"));
+            b.onFire = () -> {
+                if (!pickerOpen) return;
+                pickerOpen = false;
+                decided = true;
+                cleanupUi(false);
+                callback.onMenuLoadSlot(s);
+            };
+            picker.add(b);
+            y -= bh + h * 0.02f;
+        }
+        Widgets.Button back = Widgets.makeButton(app, pickerNode, font, "BACK",
+                w / 2f - 110f, h * 0.18f, 220f, h * 0.07f);
+        back.onFire = this::closeSlotPicker;
+        picker.add(back);
+
+        app.getGuiNode().attachChild(pickerNode);
+        nav = picker;
+    }
+
+    private void closeSlotPicker() {
+        pickerOpen = false;
+        if (pickerNode != null) { pickerNode.removeFromParent(); pickerNode = null; }
+        nav = mainNav;
+        audio.play(AudioManager.Sfx.BACK);
     }
 
     private BitmapText bigLabel(float size, ColorRGBA color, String text, float x, float y) {
@@ -186,8 +250,17 @@ public class MainMenuState extends BaseAppState {
         }
 
         public void onKeyEvent(KeyInputEvent evt) {
-            if (!evt.isPressed() || decided || overlayOpen()) return;
+            if (!evt.isPressed() || decided) return;
             int code = evt.getKeyCode();
+            if (pickerOpen) {
+                if (code == com.jme3.input.KeyInput.KEY_ESCAPE) closeSlotPicker();
+                else if (code == com.jme3.input.KeyInput.KEY_DOWN) moveKey(1);
+                else if (code == com.jme3.input.KeyInput.KEY_UP) moveKey(-1);
+                else if (code == com.jme3.input.KeyInput.KEY_RETURN && keyIndex >= 0)
+                    nav.get(keyIndex).onFire.run();
+                return;
+            }
+            if (overlayOpen()) return;
             if (code == com.jme3.input.KeyInput.KEY_DOWN) moveKey(1);
             else if (code == com.jme3.input.KeyInput.KEY_UP) moveKey(-1);
             else if (code == com.jme3.input.KeyInput.KEY_RETURN && keyIndex >= 0)
@@ -220,6 +293,8 @@ public class MainMenuState extends BaseAppState {
     private void cleanupUi(boolean keepCursor) {
         try { app.getInputManager().removeRawInputListener(input); } catch (Exception ignored) {}
         try { if (!keepCursor) app.getInputManager().setCursorVisible(false); } catch (Exception ignored) {}
+        if (pickerNode != null) { pickerNode.removeFromParent(); pickerNode = null; }
+        pickerOpen = false;
         ui.removeFromParent();
         if (app.getStateManager().getState(SettingsOverlay.class) != null)
             app.getStateManager().detach(settingsOverlay);

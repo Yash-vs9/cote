@@ -27,7 +27,7 @@ ME Do you always say exactly what you think?
 NPC horikita|I merely see no reason to lie. We should hurry. Homeroom starts soon.
 NPC kushida|Hey, hey! You're Ayanokouji-kun, right? I'm Kushida Kikyou! Since we're in the same class, let's be friends!
 CHOICE She's holding out her phone.|Exchange contacts|Keep it distant|Just nod quietly
-RESPONSE 0|me|Sure, why not. I gave her my contact information. Her smile could light up the whole campus.
+RESPONSE 0|me|Sure, why not. I gave her my contact information. Her smile could light up the whole campus.|kushida_contact
 RESPONSE 1|kushida|Aw, don't be like that! Come on, everyone exchanges contacts on day one!
 RESPONSE 2|kushida|Silent type, huh? That's okay! I'll drag you into the fun eventually!
 NPC horikita|Do as you like. Don't decide we are friends just because we walked together.
@@ -112,6 +112,17 @@ CHOICE Karaoke with the class?|Accept happily|Plead poverty|Maybe next time
 RESPONSE 0|kushida|Yes! Victory! Okay everyone, Ayanokouji-kun is officially in!
 RESPONSE 1|kushida|Boo! Then I'm charging you one hangout as debt. Interest compounds daily!
 RESPONSE 2|kushida|Next time means this time! Locked in!
+IF kushida_contact JUMP ch5_kushida_warm
+LABEL ch5_kushida_cold
+NARR Kushida's smile, when it landed on me, kept a polite half-step of distance. We had never traded contacts, and she remembered.
+NARR Invisible by choice. Occasionally useful.
+JUMP ch5_after_kushida
+LABEL ch5_kushida_warm
+NPC kushida|Ayanokouji-kun! I still have your contact from day one, you know? The class group chat is missing exactly one person!
+ME ...Fine. Add me.
+NPC kushida|Yesss! Welcome to the loudest group chat in Class D! Horikita-san, he said yes before you could say no!
+NPC horikita|I was never asked.
+LABEL ch5_after_kushida
 NARR That evening, everything changed. Sudou stayed late behind the special building... and three Class C students found him.
 NARR Words became shoves, shoves became fists. By nightfall Sudou was summoned for a formal hearing. Expulsion was on the table.
 TIME 18:00
@@ -181,6 +192,9 @@ NPC horikita|Ayanokouji-kun. Assemble them. I will teach, since competence evide
 ME You just volunteered yourself with zero hesitation.
 NPC horikita|Someone here must be useful. Compass in hand, I will keep them awake.
 NARR And so the Association of Failures was founded: three idiots, one tutor, and me.
+CHOICE Commit to the study group?|Every evening, properly|Drift in when convenient
+RESPONSE 0|me|Every evening. If we are doing this, we do it properly.|horikita_study
+RESPONSE 1|me|I'll drift in and out. No promises.
 TIME 17:30
 OBJ Buy old exam sets at the convenience store.
 GOTO store|9
@@ -203,6 +217,14 @@ NPC ike|Twelve pages?! My soul is leaving my body through my pencil!
 NPC yamauchi|Hold my hand, bro... tell Yamauchi-chan I loved her...
 NPC kushida|You two are hilarious! Okay, okay, focus! Horikita-san, this formula, please explain again?
 NPC sudou|Tch. Move, Ike. If I'm doing this, I'm doing it properly. Basketball team captains need passing grades.
+IF horikita_study JUMP ch9_committed
+LABEL ch9_casual
+NARR I drifted in and out of the sessions that week. Horikita counted every one of my absences out loud. Twice.
+JUMP ch9_exam_eve
+LABEL ch9_committed
+NPC horikita|Every session attended. Noted. Do not make me praise you — we would both hate it.
+ME Noted. Same.
+LABEL ch9_exam_eve
 NARR Day after day the library held our strange little alliance. Slowly, painfully, numbers began to stick.
 NPC horikita|Tomorrow is the exam. Sleep early. Arrive late once more and I will personally end you.
 
@@ -227,6 +249,18 @@ NPC chabashira|Impressive. Perfect scores across mathematics, Japanese and socia
 NPC chabashira|And Sudou... sixty in four subjects. Thirty-nine in English. Above the red line. No expulsions today.
 NPC sudou|YES!! Did you see?! Sixty!! I'm a genius!!
 NPC ike|We showed you, sensei! When Class D really tries, we can do anything!
+IF quiz_high JUMP ch11_aced
+IF quiz_low JUMP ch11_scraped
+NARR My own answer sheet was exactly as unremarkable as I intended it to be. Nobody looked twice.
+JUMP ch11_chabashira
+LABEL ch11_aced
+NPC ike|And Ayanokouji-bro topped the whole class! Teach us your ways, master!
+NARR A perfect sheet, quietly filed away. Being underestimated requires being unremarkable first. My classmates drew the opposite lesson. Fine.
+JUMP ch11_chabashira
+LABEL ch11_scraped
+NPC yamauchi|Thirty-eight in English... bro, we LIVED. We actually LIVED!
+NARR Barely over the red line, all of us. A pass was a pass. The Association holds.
+LABEL ch11_chabashira
 NPC chabashira|Indeed. However, one result interests me greatly. Ayanokouji.
 NARR Every single subject: exactly fifty points. Not forty-nine, not fifty-one. Fifty. Precision that precise is never luck.
 NPC chabashira|Fifty in every subject. Careful, deliberate mediocrity. Are you hiding something, Ayanokouji?

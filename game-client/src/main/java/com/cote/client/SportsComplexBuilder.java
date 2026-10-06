@@ -175,6 +175,8 @@ public class SportsComplexBuilder {
             place(BENCH_SEAT, wood, s[0], 0.45f, s[1], g, false, true, 0.6f, 0.9f, 1.3f);
             place(BENCH_LEG, wood, s[0], 0.225f, s[1] - 0.45f, g, false, false, 0, 0, 0);
             place(BENCH_LEG, wood, s[0], 0.225f, s[1] + 0.45f, g, false, false, 0, 0, 0);
+            // Sit-able: west-side benches face the track (+X), east-side face back (-X).
+            CampusBuilder.BENCHES.add(new float[]{s[0], s[1], s[0] < TRACK_X ? 90f : -90f});
         }
     }
 

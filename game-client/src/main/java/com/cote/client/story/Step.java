@@ -21,6 +21,10 @@ public class Step {
         PAUSE,     // texts=[npcId]                   freeze an NPC's schedule movement
         RESUME,    // texts=[npcId]
         SET,       // texts=[flag]
+        LABEL,     // texts=[name]                    jump target (chapter-scoped, skipped at runtime)
+        JUMP,      // texts=[label]                   unconditional redirect to a LABEL in this chapter
+        IF_JUMP,   // texts=[flag, label]             jump to LABEL only when flag is set
+        GOTO_CH,   // nums=[chapterNumber]            jump to the start of another chapter
         QUIZ,      //                                 midterm quiz mini-game
         TITLE,     // texts=[banner]                  transient top-of-screen notice (non-blocking)
         END        //                                 story finished

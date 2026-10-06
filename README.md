@@ -22,17 +22,20 @@ victory party, including a midterm exam you actually take.
 |---|---|
 | Mouse | Look around (pointer is captured during play) |
 | `W A S D` | Move · `Shift` sprint |
-| `E` | Interact / advance story dialogue |
+| `E` | Interact / advance story dialogue / sit & stand at benches |
 | `1–4` | Answer dialogue choices & exam questions |
 | `ESC` | Pause menu (Resume / Save / Settings / Quit) |
+| `P` | Photo mode (hidden HUD, free camera) · `F12` screenshot |
+| `TAB` | Toggle ACTION mode while chatting with an NPC |
 
 ### Game modes (title screen)
 
-- **Continue** — resumes your last save (story position *and* where you were standing).
-- **Free Roam** — sandbox campus; chat with classmates via Google Gemini AI (optional API key via `GEMINI_API_KEY` env var), command NPCs, ride elevators, day/night cycle.
-- **Play Story** — the Volume 1 campaign. Autosaves at every milestone.
+- **Continue** — resumes your most recent save (story position *and* where you were standing).
+- **Load Game** — three save slots; the picker shows each slot's progress.
+- **Free Roam** — sandbox campus; chat with classmates via Google Gemini AI (optional API key via `GEMINI_API_KEY` env var), command NPCs, ride elevators, day/night cycle, rain showers.
+- **Play Story** — the Volume 1 campaign with handcrafted branching paths. Autosaves at every milestone.
 
-Settings persist (`settings.properties`): audio volumes, mouse sensitivity, reduced motion,
+Settings persist (`settings.properties`): audio volumes, mouse sensitivity, FOV, rain weather, reduced motion,
 FPS counter. Saves are atomic — a crash can never corrupt your progress.
 
 ---

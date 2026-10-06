@@ -21,7 +21,7 @@ import java.util.Properties;
  */
 public final class GameSave {
 
-    public static final int FORMAT_VERSION = 1;
+    public static final int FORMAT_VERSION = 2;
     public static final String FILE = "save.dat";
     static final String LEGACY_FILE = "story_save.properties";
 
@@ -34,6 +34,9 @@ public final class GameSave {
     // Story progression (mirrors StoryManager state)
     public int chapterIdx, stepIdx;
     public List<String> flags = new ArrayList<>();
+    // v2: life-sim state
+    public int day = 1;
+    public long points = 0;
 
     private GameSave(Path path) { this.path = path; }
 
@@ -81,6 +84,8 @@ public final class GameSave {
             s.stepIdx = intOf(p.getProperty("stepIdx"), 0);
             String fl = p.getProperty("flags", "");
             if (!fl.isEmpty()) for (String t : fl.split(",")) if (!t.isBlank()) s.flags.add(t.trim());
+            s.day = intOf(p.getProperty("day"), 1);                 // v1 files predate these; defaults keep
+            s.points = longOf(p.getProperty("points"), 0);          // older saves playable with fresh wallets
             Log.info("Game save loaded (v" + v + ", mode=" + s.mode + ")");
             return s;
         } catch (Exception e) {
@@ -91,7 +96,7 @@ public final class GameSave {
     }
 
     public void store(String mode, com.jme3.math.Vector3f pos, float yawDeg, double clockMin,
-                      int chapterIdx, int stepIdx, Iterable<String> flags) {
+                      int chapterIdx, int stepIdx, Iterable<String> flags, int day, long points) {
         this.mode = mode;
         this.px = pos.x; this.py = pos.y; this.pz = pos.z;
         this.yawDeg = yawDeg;
@@ -100,6 +105,8 @@ public final class GameSave {
         this.stepIdx = stepIdx;
         this.flags.clear();
         if (flags != null) for (String f : flags) this.flags.add(f);
+        this.day = day;
+        this.points = points;
         store();
     }
 
@@ -117,6 +124,8 @@ public final class GameSave {
         p.setProperty("chapterIdx", String.valueOf(chapterIdx));
         p.setProperty("stepIdx", String.valueOf(stepIdx));
         p.setProperty("flags", String.join(",", flags));
+        p.setProperty("day", String.valueOf(day));
+        p.setProperty("points", String.valueOf(points));
         try {
             Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
             try (OutputStream out = Files.newOutputStream(tmp)) { p.store(out, "ANHS Java Edition save"); }
@@ -163,4 +172,5 @@ public final class GameSave {
     private static float floatOf(String v, float def) { try { return Float.parseFloat(v); } catch (Exception e) { return def; } }
     private static double doubleOf(String v, double def) { try { return Double.parseDouble(v); } catch (Exception e) { return def; } }
     private static int intOf(String v, int def) { try { return Integer.parseInt(v.trim()); } catch (Exception e) { return def; } }
+    private static long longOf(String v, long def) { try { return Long.parseLong(v.trim()); } catch (Exception e) { return def; } }
 }
