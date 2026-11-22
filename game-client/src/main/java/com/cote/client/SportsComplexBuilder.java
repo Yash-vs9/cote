@@ -85,9 +85,11 @@ public class SportsComplexBuilder {
 
     /** Path strips bridging the campus side path (x=53) to the zone entry. */
     private void buildPaths(Node g, ColorRGBA pave) {
-        plane(26, 5, pave, 67, 0.013f, 34, g);   // spur from side path
-        plane(10, 10, pave, 77, 0.013f, 34, g);  // entry pad
-        plane(5, 26, pave, 98, 0.013f, 17, g);   // branch down to the tennis courts
+        plane(26, 5, pave, 65, 0.013f, 50, g);    // spur north of the gymnasium
+        plane(10, 10, pave, 80, 0.013f, 34, g);   // entry pad east of the gymnasium
+        plane(5, 18, pave, 78, 0.013f, 42, g);    // link north spur -> entry pad
+        plane(15, 5, pave, 90, 0.013f, 30, g);    // entry pad -> tennis branch
+        plane(5, 26, pave, 98, 0.013f, 17, g);    // branch down to the tennis-court gate
     }
 
     private void buildTennisCourts(Node g, ColorRGBA surface, ColorRGBA line, ColorRGBA net, ColorRGBA steel) {
@@ -105,22 +107,26 @@ public class SportsComplexBuilder {
         }
     }
 
-    /** One chain-link style enclosure around all four courts (X 79..117, Z -12..6). */
+    /** One chain-link style enclosure around all four courts (X 79..117, Z -12..6), with a north gate. */
     private void buildTennisFence(Node g, ColorRGBA meshCol, ColorRGBA steel) {
+        // North fence is split around a 5m gate at x=98 so the path can enter the courts.
+        plane2(16.5f, 0.04f, 3, meshCol, 87.25f, 1.5f, 6, g);
+        plane2(16.5f, 0.04f, 3, meshCol, 108.75f, 1.5f, 6, g);
         plane2(38, 0.04f, 3, meshCol, 98, 1.5f, -12, g);
-        plane2(38, 0.04f, 3, meshCol, 98, 1.5f, 6, g);
         plane2(0.04f, 18, 3, meshCol, 79, 1.5f, -3, g);
         plane2(0.04f, 18, 3, meshCol, 117, 1.5f, -3, g);
         place(FENCE_RAIL_L, steel, 98, 3.05f, -12, g, false, false, 0, 0, 0);
-        place(FENCE_RAIL_L, steel, 98, 3.05f, 6, g, false, false, 0, 0, 0);
+        place(new Box(8.25f, 0.05f, 0.08f), steel, 87.25f, 3.05f, 6, g, false, false, 0, 0, 0);
+        place(new Box(8.25f, 0.05f, 0.08f), steel, 108.75f, 3.05f, 6, g, false, false, 0, 0, 0);
         place(FENCE_RAIL_W, steel, 79, 3.05f, -3, g, false, false, 0, 0, 0);
         place(FENCE_RAIL_W, steel, 117, 3.05f, -3, g, false, false, 0, 0, 0);
-        float[][] corners = {{79, -12}, {79, 6}, {117, -12}, {117, 6}};
+        float[][] corners = {{79, -12}, {79, 6}, {117, -12}, {117, 6}, {95.5f, 6}, {100.5f, 6}};
         for (float[] c : corners) {
             cylUp(CORNER_POST, steel, c[0], 1.6f, c[1], g, true, true, 0.4f, 3.2f, 0.4f);
         }
         collider(98, 1.5f, -12, 38, 3, 0.4f);
-        collider(98, 1.5f, 6, 38, 3, 0.4f);
+        collider(87.25f, 1.5f, 6, 16.5f, 3, 0.4f);
+        collider(108.75f, 1.5f, 6, 16.5f, 3, 0.4f);
         collider(79, 1.5f, -3, 0.4f, 3, 18);
         collider(117, 1.5f, -3, 0.4f, 3, 18);
     }

@@ -24,7 +24,7 @@ public final class Settings {
     public int ambienceVolume = 70;
 
     // Gameplay
-    /** Mouse look sensitivity multiplier, 20..200 (%). */
+    /** Mouse look sensitivity multiplier, 0..100 (%). */
     public int sensitivity = 100;
     /** Reduced motion: disables letterbox slide + camera bob flourishes. */
     public boolean reducedMotion = false;

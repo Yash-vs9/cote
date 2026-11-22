@@ -59,6 +59,12 @@ public class Rig {
 
     private float gaitPhase = 0;
     private float prevSpeed = 0;
+    private boolean reducedMotion = false;
+
+    /** Reduced Motion keeps the gait but removes bob/sway/lean flourishes. */
+    public void setReducedMotion(boolean reducedMotion) {
+        this.reducedMotion = reducedMotion;
+    }
 
     public Rig(AssetManager assetManager, String gender) {
         this.am = assetManager;
@@ -74,28 +80,30 @@ public class Rig {
         ColorRGBA dark   = new ColorRGBA(0.10f, 0.09f, 0.09f, 1f);
 
         float hipY = 0.78f;
-        float upperLegLen = 0.40f;
-        float lowerLegLen = 0.38f;
+        // Segment lengths are the FULL bone lengths; the boxes use height == length and are
+        // centered at half the length so the knee/ankle land exactly at the segment ends.
+        float upperLegLen = 0.36f;
+        float lowerLegLen = 0.32f;
         float footH = 0.10f;
-        float upperArmLen = 0.30f;
-        float lowerArmLen = 0.28f;
+        float upperArmLen = 0.28f;
+        float lowerArmLen = 0.26f;
 
         // ---- Legs: upper (hip pivot) -> lower (knee pivot) -> foot ----
         legUpperL.setLocalTranslation(0.13f, hipY, 0);
         legUpperR.setLocalTranslation(-0.13f, hipY, 0);
         // Upper leg geometry offset downward from hip pivot
-        box(legUpperL, lower, 0.24f, upperLegLen * 2, 0.26f, 0, -upperLegLen, 0);
-        box(legUpperR, lower, 0.24f, upperLegLen * 2, 0.26f, 0, -upperLegLen, 0);
+        box(legUpperL, lower, 0.24f, upperLegLen, 0.26f, 0, -upperLegLen / 2f, 0);
+        box(legUpperR, lower, 0.24f, upperLegLen, 0.26f, 0, -upperLegLen / 2f, 0);
 
         // Lower leg (knee pivot at end of upper leg)
-        legLowerL.setLocalTranslation(0, -upperLegLen * 2, 0);
-        legLowerR.setLocalTranslation(0, -upperLegLen * 2, 0);
-        box(legLowerL, lower, 0.22f, lowerLegLen * 2, 0.24f, 0, -lowerLegLen, 0);
-        box(legLowerR, lower, 0.22f, lowerLegLen * 2, 0.24f, 0, -lowerLegLen, 0);
+        legLowerL.setLocalTranslation(0, -upperLegLen, 0);
+        legLowerR.setLocalTranslation(0, -upperLegLen, 0);
+        box(legLowerL, lower, 0.22f, lowerLegLen, 0.24f, 0, -lowerLegLen / 2f, 0);
+        box(legLowerR, lower, 0.22f, lowerLegLen, 0.24f, 0, -lowerLegLen / 2f, 0);
 
-        // Shoes (child of lower leg)
-        Geometry shoeL = box(legLowerL, dark, 0.26f, footH * 2, 0.34f, 0, -lowerLegLen - footH + 0.02f, 0.04f);
-        Geometry shoeR = box(legLowerR, dark, 0.26f, footH * 2, 0.34f, 0, -lowerLegLen - footH + 0.02f, 0.04f);
+        // Shoes (child of lower leg); their soles sit on the ground plane.
+        Geometry shoeL = box(legLowerL, dark, 0.26f, footH, 0.34f, 0, -lowerLegLen - footH / 2f, 0.04f);
+        Geometry shoeR = box(legLowerR, dark, 0.26f, footH, 0.34f, 0, -lowerLegLen - footH / 2f, 0.04f);
 
         legUpperL.attachChild(legLowerL);
         legUpperR.attachChild(legLowerR);
@@ -128,14 +136,14 @@ public class Rig {
         // ---- Arms: upper (shoulder pivot) -> lower (elbow pivot) -> hand ----
         armUpperL.setLocalTranslation(0.37f, 0.58f, 0);
         armUpperR.setLocalTranslation(-0.37f, 0.58f, 0);
-        box(armUpperL, blazer, 0.17f, upperArmLen * 2, 0.22f, 0, -upperArmLen, 0);
-        box(armUpperR, blazer, 0.17f, upperArmLen * 2, 0.22f, 0, -upperArmLen, 0);
+        box(armUpperL, blazer, 0.17f, upperArmLen, 0.22f, 0, -upperArmLen / 2f, 0);
+        box(armUpperR, blazer, 0.17f, upperArmLen, 0.22f, 0, -upperArmLen / 2f, 0);
 
         // Lower arm (elbow pivot)
-        armLowerL.setLocalTranslation(0, -upperArmLen * 2, 0);
-        armLowerR.setLocalTranslation(0, -upperArmLen * 2, 0);
-        box(armLowerL, blazer, 0.15f, lowerArmLen * 2, 0.20f, 0, -lowerArmLen, 0);
-        box(armLowerR, blazer, 0.15f, lowerArmLen * 2, 0.20f, 0, -lowerArmLen, 0);
+        armLowerL.setLocalTranslation(0, -upperArmLen, 0);
+        armLowerR.setLocalTranslation(0, -upperArmLen, 0);
+        box(armLowerL, blazer, 0.15f, lowerArmLen, 0.20f, 0, -lowerArmLen / 2f, 0);
+        box(armLowerR, blazer, 0.15f, lowerArmLen, 0.20f, 0, -lowerArmLen / 2f, 0);
 
         // Hands
         box(armLowerL, skin, 0.14f, 0.12f, 0.18f, 0, -lowerArmLen - 0.06f, 0);
@@ -229,6 +237,14 @@ public class Rig {
         // Lateral sway: subtle side-to-side at walk speed
         float sway = (float) Math.sin(gaitPhase * 2) * 0.015f * walkT * moveBlend;
 
+        if (reducedMotion) {
+            // Keep the gait but drop secondary bob/sway/lean motion.
+            torsoY = 0.78f;
+            lean = 0f;
+            twist = 0f;
+            sway = 0f;
+        }
+
         torso.setLocalTranslation(0, torsoY, 0);
         torso.setLocalRotation(qTorso.fromAngles(lean, twist, sway));
 
@@ -237,6 +253,7 @@ public class Rig {
         float headSway = (float) Math.sin(gaitPhase) * 0.01f * walkT * moveBlend;
         // Head counter-rotates torso to stay level (vestibular reflex)
         float headTilt = -lean * 0.3f + (float) Math.sin(time * 1.2f) * 0.015f * (1f - moveBlend);
+        if (reducedMotion) { headBob = 0f; headSway = 0f; headTilt = 0f; }
         head.setLocalTranslation(0, 0.66f + 0.22f + headBob, 0);
         head.setLocalRotation(qHead.fromAngles(headTilt, -twist * 0.5f, headSway));
 
@@ -244,6 +261,7 @@ public class Rig {
         if (moveBlend < 0.05f) {
             float idleSway = (float) Math.sin(time * 1.1f) * 0.018f;
             float idleBreathe = (float) Math.sin(time * 1.6f) * 0.012f;
+            if (reducedMotion) { idleSway = 0f; idleBreathe = 0f; }
             torso.setLocalTranslation(0, 0.78f + idleBreathe, 0);
             torso.setLocalRotation(qTorso.fromAngles(idleSway * 0.5f, 0, idleSway));
             head.setLocalTranslation(0, 0.66f + 0.22f + idleBreathe * 0.6f, 0);

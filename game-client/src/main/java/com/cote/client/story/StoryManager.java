@@ -56,6 +56,8 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     private java.util.function.IntConsumer quizRewardHook = null;
     /** True when this run was started fresh (New Game) rather than Continue. */
     private boolean freshRun = false;
+    /** Mirrors the user's Reduced Motion setting (disables UI flourishes). */
+    private boolean reducedMotion = false;
 
     public StoryManager(SimpleApplication app, SimulationEngine engine, NpcController npcController,
                         com.cote.client.systems.GameSave resume) {
@@ -65,11 +67,17 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
         if (resume != null && "story".equals(resume.mode)) {
             chapterIdx = Math.max(0, resume.chapterIdx);
             stepIdx = Math.max(0, resume.stepIdx);
+            lastChoice = Math.max(0, resume.lastChoice);
             flags.addAll(resume.flags);
             freshRun = false;
         } else {
             freshRun = true;
         }
+    }
+
+    public void setReducedMotion(boolean reducedMotion) {
+        this.reducedMotion = reducedMotion;
+        if (ui != null) ui.setReducedMotion(reducedMotion);
     }
 
     public void setAutosaveHook(Runnable r) { this.autosaveHook = r != null ? r : () -> {}; }
@@ -82,6 +90,7 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     public boolean isActive() { return started && !detached; }
     public int getChapterIdx() { return chapterIdx; }
     public int getStepIdx() { return stepIdx; }
+    public int getLastChoice() { return lastChoice; }
     public java.util.Set<String> getFlags() { return flags; }
 
     // ---------------------------------------------------------------- lifecycle
@@ -90,6 +99,7 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     protected void initialize(Application application) {
         ui = new StoryUI(app, this);
         ui.init();
+        ui.setReducedMotion(reducedMotion);
         for (NPC n : engine.getNpcs()) npcNames.put(n.getId(), n.getName());
 
         try {
@@ -99,9 +109,11 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
             chapters = new java.util.ArrayList<>();
         }
 
+        // Mark the run active BEFORE the first step autosaves; otherwise Main would
+        // classify that save as free-roam and drop the player's story progress.
+        started = true;
         if (freshRun) beginNew();
         else resumeCurrent();
-        started = true;
     }
 
     /** Fresh playthrough from Chapter 1. */
@@ -112,16 +124,33 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
         runFromCurrent();
     }
 
-    /** Continue a previous run: jump to the saved step, re-spawning any extras. */
+    /** Continue a previous run: jump to the saved step, replaying one-shot world changes. */
     private void resumeCurrent() {
         if (chapters.isEmpty()) { beginNew(); return; }
         chapterIdx = Math.min(chapterIdx, chapters.size() - 1);
         Chapter ch = chapters.get(chapterIdx);
         stepIdx = Math.min(stepIdx, ch.steps.size());
-        // Re-apply SPAWN steps already consumed this chapter so staged characters exist.
-        for (int i = 0; i < stepIdx && i < ch.steps.size(); i++) {
-            Step st = ch.steps.get(i);
-            if (st.type == Step.Type.SPAWN) doSpawn(st);
+        // Re-apply every consumed world-state step from the start of the volume so this
+        // is a true reconstruction: spawned extras exist, despawned extras are gone, and
+        // NPC pauses/resumes match the saved moment even across chapter boundaries.
+        despawnAll();
+        for (int c = 0; c <= chapterIdx && c < chapters.size(); c++) {
+            List<Step> steps = chapters.get(c).steps;
+            int limit = (c == chapterIdx) ? stepIdx : steps.size();
+            for (int i = 0; i < limit && i < steps.size(); i++) {
+                Step st = steps.get(i);
+                switch (st.type) {
+                    case SPAWN: doSpawn(st); break;
+                    case DESPAWN: doDespawn(st.text(0)); break;
+                    case PAUSE:
+                        if (npcController != null) npcController.pauseNpc(st.text(0));
+                        break;
+                    case RESUME:
+                        if (npcController != null) npcController.resumeNpc(st.text(0));
+                        break;
+                    default: break;
+                }
+            }
         }
         runFromCurrent();
     }
@@ -198,6 +227,7 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
         current = st;
         switch (st.type) {
             case CHAPTER:
+                lastChoice = 0; // page totals for a new chapter must not use the previous branch
                 ui.showTitleCard("Chapter " + (int) st.num(0), st.text(0), 3.2f);
                 titleWait = 3.4f;
                 mode = Mode.TITLE_CARD;
@@ -223,9 +253,14 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
                 if ((int) st.num(0) != lastChoice) { consume(); runFromCurrent(); return; }
                 if (st.texts.length > 2 && !st.text(2).isEmpty()) flags.add(st.text(2));
                 String spk = st.text(0);
-                ColorRGBA col = spk.equalsIgnoreCase("me") ? new ColorRGBA(1f, 0.92f, 0.55f, 1f) : speakerColor(spk);
-                ui.showPage(spk.equalsIgnoreCase("me") ? "Ayanokouji" : displayName(spk), col, st.text(1),
-                        pageIndex(), pageTotal());
+                if (spk.equalsIgnoreCase("narr")) {
+                    // Narration must render in narration styling, never as a speaker named "narr".
+                    ui.showPage(null, null, st.text(1), pageIndex(), pageTotal());
+                } else {
+                    ColorRGBA col = spk.equalsIgnoreCase("me") ? new ColorRGBA(1f, 0.92f, 0.55f, 1f) : speakerColor(spk);
+                    ui.showPage(spk.equalsIgnoreCase("me") ? "Ayanokouji" : displayName(spk), col, st.text(1),
+                            pageIndex(), pageTotal());
+                }
                 mode = Mode.PAGE;
                 save();
                 break;
@@ -329,6 +364,8 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     @Override
     public void update(float tpf) {
         if (!started) return;
+        // The pause menu freezes the whole simulation, story timers included.
+        if (app.getStateManager().getState(com.cote.client.PauseMenuState.class) != null) return;
         time += tpf;
         ui.update(tpf);
 
@@ -416,11 +453,17 @@ public class StoryManager extends BaseAppState implements StoryUI.Delegate {
     }
 
     private void finishAndDetach() {
+        shutdown();
+        app.getStateManager().detach(this);
+    }
+
+    /** Stop this run (quit-to-title or script end): remove story UI and spawned extras exactly once. */
+    public void shutdown() {
+        if (detached) return;
         detached = true;
-        ui.dispose();
+        if (ui != null) ui.dispose();
         despawnAll();
         setEnabled(false);
-        app.getStateManager().detach(this);
     }
 
     /** Durable milestone reached -> let the game layer persist the whole save slot. */

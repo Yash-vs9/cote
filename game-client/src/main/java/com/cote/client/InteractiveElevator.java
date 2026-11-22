@@ -66,9 +66,9 @@ public class InteractiveElevator {
         }
         platform.setLocalTranslation(local);
 
-        // Carry the player up/down with the car.
+        // Carry the player up/down with the car, preserving the normal eye height above the floor.
         if (playerOnBoard) {
-            pPos.y = base.y + local.y + 2.0f;
+            pPos.y = base.y + local.y + 1.6f;
             gameMain.getCamera().setLocation(pPos);
         }
     }

@@ -17,13 +17,8 @@ public class SimulationServer {
     private final SimulationEngine engine;
     private final HttpServer server;
 
-    public SimulationServer(int port, boolean headless) throws IOException {
+    public SimulationServer(int port) throws IOException {
         this.engine = new SimulationEngine();
-        
-        if (!headless) {
-            // Start the visualizer
-            new SimulationVisualizer(this.engine);
-        }
 
         this.server = HttpServer.create(new InetSocketAddress(port), 0);
         this.server.setExecutor(Executors.newCachedThreadPool());
@@ -52,7 +47,15 @@ public class SimulationServer {
     }
 
     private void setupRoutes() {
-        server.createContext("/", new StaticFileHandler(".."));
+        // The old web portal was removed with the desktop migration; serve a small
+        // API index instead of a working-directory-dependent static file tree.
+        server.createContext("/", new HttpHandler() {
+            @Override
+            public void handle(HttpExchange exchange) throws IOException {
+                sendJson(exchange, "{\"server\":\"COTE Java Simulation Engine\",\"version\":\"2.0\","
+                        + "\"endpoints\":[\"/api/health\",\"/api/simulation\",\"/api/route\",\"/api/time\"]}");
+            }
+        });
 
         server.createContext("/api/health", new HttpHandler() {
             @Override
@@ -173,16 +176,12 @@ public class SimulationServer {
     public static void main(String[] args) {
         try {
             int port = DEFAULT_PORT;
-            boolean headless = false;
-            
             for (String arg : args) {
-                if (arg.equals("--headless")) headless = true;
-                else {
-                    try { port = Integer.parseInt(arg); } catch (Exception ignored) {}
-                }
+                if (arg.startsWith("--")) continue; // legacy --headless flag: the server is always headless
+                try { port = Integer.parseInt(arg); } catch (Exception ignored) {}
             }
-            
-            SimulationServer server = new SimulationServer(port, headless);
+
+            SimulationServer server = new SimulationServer(port);
             server.start();
         } catch (Exception e) {
             e.printStackTrace();

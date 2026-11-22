@@ -24,6 +24,9 @@ public class HudUI extends BaseAppState {
     private BitmapText promptLabel;
     private com.jme3.scene.Geometry promptPanel;      // translucent pill behind prompts
     private com.jme3.scene.Geometry promptEdge;       // accent bar on the pill's left edge
+    private String promptText = "";                     // cached so identical frames do no work
+    private boolean promptVisible = false;
+    private float promptCamW = -1f, promptCamH = -1f;
 
     private BitmapText npcNameLabel;
     private BitmapText npcResponseLabel;
@@ -90,7 +93,7 @@ public class HudUI extends BaseAppState {
                 if (!evt.isPressed() || currentElevator == null) return;
                 int code = evt.getKeyCode();
                 int n = currentElevator.getFloorCount();
-                if (code == KeyInput.KEY_ESCAPE) { closeElevator(); return; }
+                if (code == KeyInput.KEY_ESCAPE) { evt.setConsumed(); closeElevator(); return; }
                 if (code == KeyInput.KEY_UP)   { elevatorSelection = Math.min(n - 1, elevatorSelection + 1); refreshElevatorPanel(); return; }
                 if (code == KeyInput.KEY_DOWN) { elevatorSelection = Math.max(0, elevatorSelection - 1); refreshElevatorPanel(); return; }
                 if (code == KeyInput.KEY_RETURN || code == KeyInput.KEY_SPACE) {
@@ -109,6 +112,7 @@ public class HudUI extends BaseAppState {
 
             int code = evt.getKeyCode();
             if (code == KeyInput.KEY_ESCAPE) {
+                evt.setConsumed(); // raw listeners run first: own ESC or Main reopens pause
                 closeDialogue();
                 return;
             }
@@ -238,46 +242,57 @@ public class HudUI extends BaseAppState {
     public boolean isElevatorActive() { return isElevatorActive; }
 
     public void showPrompt(String name) {
-        if (!isDialogueActive) {
-            promptLabel.setText("Press E to talk to " + name);
-            layoutPrompt(app.getCamera().getHeight() / 2f);
-        }
+        if (!isDialogueActive) setPrompt("Press E to talk to " + name);
     }
     
     /** Generic centered prompt (e.g. for elevators/doors), not just NPCs. */
     public void showActionPrompt(String text) {
         if (isDialogueActive || isElevatorActive) return;
+        setPrompt(text);
+    }
+
+    /** Update the centered pill only when its text actually changes (per-frame caller). */
+    private void setPrompt(String text) {
+        float cw = app.getCamera().getWidth(), ch = app.getCamera().getHeight();
+        if (promptVisible && text.equals(promptText) && cw == promptCamW && ch == promptCamH) return;
+        promptText = text;
+        promptVisible = true;
+        promptCamW = cw;
+        promptCamH = ch;
         promptLabel.setText(text);
-        layoutPrompt(app.getCamera().getHeight() / 2f);
+        layoutPrompt();
     }
 
     /** Centered pill: translucent panel sized to the current prompt text (sits below the crosshair). */
-    private void layoutPrompt(float centerY) {
+    private void layoutPrompt() {
         float w = app.getCamera().getWidth(), h = app.getCamera().getHeight();
         float ly = h / 2f - promptLabel.getLineHeight() * 3.4f;
         promptLabel.setLocalTranslation(
             w / 2f - promptLabel.getLineWidth() / 2f, ly, 0
         );
-        if (promptPanel != null) promptPanel.removeFromParent();
-        if (promptEdge != null) promptEdge.removeFromParent();
         float pwid = Math.min(w * 0.7f, promptLabel.getLineWidth() + 40);
         float phei = promptLabel.getLineHeight() + 18;
-        promptPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pwid, phei,
-                new ColorRGBA(0.03f, 0.05f, 0.09f, 0.8f));
-        promptEdge = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 3.5f, phei, UiKit.ACCENT);
-        app.getGuiNode().attachChild(promptPanel);
-        app.getGuiNode().attachChild(promptEdge);   // amber accent on the pill's left edge
-        app.getGuiNode().attachChild(promptLabel);  // label renders above the pill
+        if (promptPanel == null) {
+            promptPanel = com.cote.client.ui.UiKit.panel(app.getAssetManager(), pwid, phei,
+                    new ColorRGBA(0.03f, 0.05f, 0.09f, 0.8f));
+            promptEdge = com.cote.client.ui.UiKit.panel(app.getAssetManager(), 3.5f, phei, UiKit.ACCENT);
+        } else {
+            ((com.jme3.scene.shape.Quad) promptPanel.getMesh()).updateGeometry(pwid, phei);
+            ((com.jme3.scene.shape.Quad) promptEdge.getMesh()).updateGeometry(3.5f, phei);
+        }
+        if (promptPanel.getParent() == null) app.getGuiNode().attachChild(promptPanel);
+        if (promptEdge.getParent() == null) app.getGuiNode().attachChild(promptEdge);   // amber accent
+        if (promptLabel.getParent() == null) app.getGuiNode().attachChild(promptLabel); // above the pill
         promptPanel.setLocalTranslation(w / 2f - pwid / 2f, ly - 12, 0);
         promptEdge.setLocalTranslation(w / 2f - pwid / 2f, ly - 12, 0.05f);
     }
 
     public void hidePrompt() {
-        if (promptPanel != null) { promptPanel.removeFromParent(); promptPanel = null; }
-        if (promptEdge != null) { promptEdge.removeFromParent(); promptEdge = null; }
-        if (promptLabel.getParent() != null) {
-            promptLabel.removeFromParent();
-        }
+        promptVisible = false;
+        promptText = "";
+        if (promptPanel != null && promptPanel.getParent() != null) promptPanel.removeFromParent();
+        if (promptEdge != null && promptEdge.getParent() != null) promptEdge.removeFromParent();
+        if (promptLabel.getParent() != null) promptLabel.removeFromParent();
     }
     
     public void openDialogue(NPC npc) { openDialogue(npc, "the campus", ""); }
@@ -295,6 +310,9 @@ public class HudUI extends BaseAppState {
         sceneLocation = location;
         sceneTime = time;
         hidePrompt();
+
+        // The LEAVE button is mouse-driven, so the cursor must be usable during chat.
+        app.getInputManager().setCursorVisible(true);
 
         // Freeze the NPC's schedule-driven movement for the duration of the chat.
         frozenNpcId = npc.getId();
@@ -454,6 +472,7 @@ public class HudUI extends BaseAppState {
         leaveBtn = null;
         stopSpeaking(); // don't keep talking after the conversation closes
         resumeFrozenNpc(); // never leave the NPC permanently frozen
+        app.getInputManager().setCursorVisible(false); // back to pointer-locked gameplay
     }
 
     private void updateModeLabel() {
@@ -625,6 +644,7 @@ public class HudUI extends BaseAppState {
     protected void cleanup(Application app) {
         stopSpeaking();
         resumeFrozenNpc(); // app shutdown mid-dialogue must not leave the NPC frozen
+        try { app.getInputManager().removeRawInputListener(textInputListener); } catch (Exception ignored) {}
     }
 
     @Override

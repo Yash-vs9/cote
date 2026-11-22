@@ -124,7 +124,7 @@ public class PauseMenuState extends BaseAppState {
             if (!evt.isPressed()) return;
             if (overlayOpen()) return;
             int code = evt.getKeyCode();
-            if (code == com.jme3.input.KeyInput.KEY_ESCAPE) close();
+            if (code == com.jme3.input.KeyInput.KEY_ESCAPE) { evt.setConsumed(); close(); }
             else if (code == com.jme3.input.KeyInput.KEY_DOWN) moveKey(1);
             else if (code == com.jme3.input.KeyInput.KEY_UP) moveKey(-1);
             else if ((code == com.jme3.input.KeyInput.KEY_RETURN || code == com.jme3.input.KeyInput.KEY_SPACE)

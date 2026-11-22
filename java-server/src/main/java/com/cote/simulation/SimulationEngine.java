@@ -179,8 +179,20 @@ public class SimulationEngine {
         }
     }
 
+    /** Restore a saved clock without treating the jump as a day rollover. */
+    public synchronized void restoreClock(double minutes) {
+        this.clockMin = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+        this.currentEvent = null;
+        tick(0.0);
+    }
+
     public synchronized void setClockMin(double minutes) {
-        this.clockMin = minutes % (24 * 60);
+        double old = clockMin;
+        double next = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+        // A large backward jump is a trip past midnight (story TIME jumps such as
+        // 18:00 -> 07:50 next morning); small rewinds/forward jumps stay on the same day.
+        if (next < old && old - next >= 6 * 60) day++;
+        this.clockMin = next;
         this.currentEvent = null;
         tick(0.0);
     }

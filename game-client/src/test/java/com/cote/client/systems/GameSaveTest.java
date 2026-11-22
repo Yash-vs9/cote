@@ -16,7 +16,7 @@ class GameSaveTest {
     void storeThenLoadRoundTripsAllFields() {
         GameSave s = GameSave.blankAt(dir.resolve("save.dat"));
         s.store("story", new com.jme3.math.Vector3f(1.5f, 2.5f, 3.5f), 45f, 512.5, 7, 13,
-                java.util.List.of("evidence_ready", "choice_1"), 3, 123456L);
+                java.util.List.of("evidence_ready", "choice_1"), 3, 123456L, 2);
         assertTrue(java.nio.file.Files.exists(dir.resolve("save.dat")));
 
         GameSave loaded = GameSave.loadFrom(dir.resolve("save.dat"));
@@ -30,6 +30,7 @@ class GameSaveTest {
         assertEquals(512.5, loaded.clockMin, 0.001);
         assertEquals(7, loaded.chapterIdx);
         assertEquals(13, loaded.stepIdx);
+        assertEquals(2, loaded.lastChoice, "branch choice survives a save/load round trip");
         assertTrue(loaded.flags.contains("evidence_ready"));
         assertEquals(3, loaded.day);
         assertEquals(123456L, loaded.points);

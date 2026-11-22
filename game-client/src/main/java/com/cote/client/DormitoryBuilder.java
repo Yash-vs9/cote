@@ -165,19 +165,19 @@ public class DormitoryBuilder {
         ColorRGBA wood    = new ColorRGBA(0.55f, 0.40f, 0.25f, 1f);
 
         float kz = 11f; // south side, between corridor (z+3) and outer wall (z+14)
-        // Counter run along the outer wall with upper cabinets
-        deco(9f, 0.9f, 0.7f, counter, 0, y + 0.45f, kz + 1.5f, g, true);
-        deco(9f, 0.7f, 0.5f, cabinet, 0, y + 2.2f, kz + 1.6f, g, false);
-        deco(0.6f, 0.15f, 0.5f, steel, -2.5f, y + 0.95f, kz + 1.5f, g, false); // sink basin
-        deco(0.8f, 0.1f, 0.6f, stove, 1.5f, y + 0.95f, kz + 1.5f, g, false);   // stovetop
+        // Counter run along the outer wall, shifted east so the entrance/lift corridor stays clear.
+        deco(7f, 0.9f, 0.7f, counter, 5.5f, y + 0.45f, kz + 1.5f, g, true);
+        deco(7f, 0.7f, 0.5f, cabinet, 5.5f, y + 2.2f, kz + 1.6f, g, false);
+        deco(0.6f, 0.15f, 0.5f, steel, 3.5f, y + 0.95f, kz + 1.5f, g, false); // sink basin
+        deco(0.8f, 0.1f, 0.6f, stove, 7f, y + 0.95f, kz + 1.5f, g, false);   // stovetop
         // Fridge
-        deco(0.9f, 1.9f, 0.8f, fridge, 4.0f, y + 0.95f, kz + 1.4f, g, true);
-        // Dining table + chairs
-        deco(2.2f, 0.75f, 1.1f, wood, 0, y + 0.375f, kz - 1.5f, g, true);
-        deco(0.5f, 0.5f, 0.5f, cabinet, -0.8f, y + 0.25f, kz - 2.3f, g, false);
-        deco(0.5f, 0.5f, 0.5f, cabinet, 0.8f, y + 0.25f, kz - 2.3f, g, false);
-        deco(0.5f, 0.5f, 0.5f, cabinet, -0.8f, y + 0.25f, kz - 0.7f, g, false);
-        deco(0.5f, 0.5f, 0.5f, cabinet, 0.8f, y + 0.25f, kz - 0.7f, g, false);
+        deco(0.9f, 1.9f, 0.8f, fridge, 9f, y + 0.95f, kz + 1.4f, g, true);
+        // Dining table + chairs (west side, clear of the entrance corridor)
+        deco(2.2f, 0.75f, 1.1f, wood, -5f, y + 0.375f, kz - 1.5f, g, true);
+        deco(0.5f, 0.5f, 0.5f, cabinet, -5.8f, y + 0.25f, kz - 2.3f, g, false);
+        deco(0.5f, 0.5f, 0.5f, cabinet, -4.2f, y + 0.25f, kz - 2.3f, g, false);
+        deco(0.5f, 0.5f, 0.5f, cabinet, -5.8f, y + 0.25f, kz - 0.7f, g, false);
+        deco(0.5f, 0.5f, 0.5f, cabinet, -4.2f, y + 0.25f, kz - 0.7f, g, false);
     }
 
     public void build() {
@@ -222,9 +222,28 @@ public class DormitoryBuilder {
                 makeBox(0.4f, FH, 28, matConcrete, -14, y + FH/2, 0, g, true);
                 makeBox(0.4f, FH, 28, matConcrete, 14, y + FH/2, 0, g, true);
                 
-                // Corridor walls
-                makeBox(20, FH, 0.2f, matConcrete, 0, y + FH/2, -3, g, true);
-                makeBox(20, FH, 0.2f, matConcrete, 0, y + FH/2, 3, g, true);
+                // Corridor walls. The north wall is cut with real 1.2m door gaps at the
+                // three room doors; the south wall gets a 2.4m gap so NPCs can reach the lift.
+                float roomDoorW = 1.2f;
+                float corridorCursor = -10f;
+                for (float doorX : new float[]{-8f, 0f, 8f}) {
+                    float gapStart = doorX - roomDoorW / 2f;
+                    if (gapStart > corridorCursor) {
+                        float seg = gapStart - corridorCursor;
+                        makeBox(seg, FH, 0.2f, matConcrete, corridorCursor + seg / 2f, y + FH / 2f, -3, g, true);
+                    }
+                    float headerH = FH - 2.2f;
+                    if (headerH > 0)
+                        makeBox(roomDoorW, headerH, 0.2f, matConcrete, doorX, y + 2.2f + headerH / 2f, -3, g, false);
+                    corridorCursor = doorX + roomDoorW / 2f;
+                }
+                if (corridorCursor < 10f) {
+                    float seg = 10f - corridorCursor;
+                    makeBox(seg, FH, 0.2f, matConcrete, corridorCursor + seg / 2f, y + FH / 2f, -3, g, true);
+                }
+                makeBox(8.8f, FH, 0.2f, matConcrete, -5.6f, y + FH / 2f, 3, g, true);
+                makeBox(8.8f, FH, 0.2f, matConcrete, 5.6f, y + FH / 2f, 3, g, true);
+                makeBox(2.4f, FH - 2.2f, 0.2f, matConcrete, 0, y + 2.2f + (FH - 2.2f) / 2f, 3, g, false);
 
                 // Staircase: straight run north along the east strip (X 10..14) from Z=2 to
                 // Z=-2.5, fully inside the slab hole above. 10 steps x 0.32 rise = FH (3.2),
@@ -235,7 +254,8 @@ public class DormitoryBuilder {
                 }
                 
                 // Dorm Rooms
-                for (float rx = -8; rx <= 8; rx += 8) { // 3 rooms per side
+                int roomIdx = 0;
+                for (float rx = -8; rx <= 8; rx += 8, roomIdx++) { // 3 rooms per side
                     // North rooms
                     makeBox(0.2f, FH, 11, matConcrete, rx + 4, y + FH/2, -8.5f, g, true);
                     
@@ -245,11 +265,12 @@ public class DormitoryBuilder {
                     }
                     
                     // Door
-                    Node doorPivot = new Node("DormDoor_" + f + "_" + rx);
+                    Node doorPivot = new Node("DormDoor_" + f + "_" + roomIdx);
                     doorPivot.setLocalTranslation(rx, y, -3);
                     g.attachChild(doorPivot);
-                    Geometry dGeom = makeBox(1.0f, 2.2f, 0.1f, matWood, 0.5f, 1.1f, 0, doorPivot, false);
-                    dGeom.setName("Door_Dorm_" + f);
+                    Geometry dGeom = makeBox(1.0f, 2.2f, 0.1f, matWood, 0f, 1.1f, 0, doorPivot, false);
+                    // Unique label per room; Main maps it back to the resident's own room.
+                    dGeom.setName("Door_Dorm_" + f + "_" + roomIdx);
                     InteractiveDoor roomDoor = new InteractiveDoor(dGeom.getName(), doorPivot, dGeom);
                     roomDoor.requiresKnock = true; // must knock before entering a private room
                     Main.doors.add(roomDoor);

@@ -557,16 +557,20 @@ public class CampusBuilder {
 
         makePlane(18, 12, paveMat, 0, 0.014f, 116, g); // gate paving
         makePlane(16, 28, paveMat, -10, 0.013f, 116, g); // bus stop area
+        makePlane(14, 76, paveMat, 0, 0.012f, -107, g); // south promenade to the seaside gate
         
         // Perimeter wall
         ColorRGBA wallMat = new ColorRGBA(0.8f, 0.82f, 0.85f, 1.0f);
         makeBox(260, 4.0f, 1.0f, wallMat, 0, 2.0f, 130, g);
-        makeBox(260, 4.0f, 1.0f, wallMat, 0, 2.0f, -130, g);
+        // South wall gets a 6m gate at X=0 so the Seaside Boulevard is reachable.
+        makeBox(127, 4.0f, 1.0f, wallMat, -66.5f, 2.0f, -130, g);
+        makeBox(127, 4.0f, 1.0f, wallMat, 66.5f, 2.0f, -130, g);
         makeBox(1.0f, 4.0f, 260, wallMat, 130, 2.0f, 0, g);
         makeBox(1.0f, 4.0f, 260, wallMat, -130, 2.0f, 0, g);
         
         addCollider(0, 10f, 130, 260, 20f, 1.0f);
-        addCollider(0, 10f, -130, 260, 20f, 1.0f);
+        addCollider(-66.5f, 10f, -130, 127f, 20f, 1.0f);
+        addCollider(66.5f, 10f, -130, 127f, 20f, 1.0f);
         addCollider(130, 10f, 0, 1.0f, 20f, 260);
         addCollider(-130, 10f, 0, 1.0f, 20f, 260);
     }
@@ -678,10 +682,15 @@ public class CampusBuilder {
             makeBox(1.2f, 2.5f, 16, matWood, cX + rX, 5.25f, cZ, g, true); // Floor 2 shelves
         }
         
-        // Desks
+        // Desks (with the four chairs used by ReservationManager's library seats)
         for (float dZ : new float[]{-8, 0, 8}) {
             makeBox(4.0f, 0.8f, 1.5f, matWood, cX + 8, 0.4f, cZ + dZ, g, true);
             makeBox(4.0f, 0.8f, 1.5f, matWood, cX + 8, 4.4f, cZ + dZ, g, true);
+            for (float dx : new float[]{-1.2f, 1.2f}) {
+                for (float dz : new float[]{-1.0f, 1.0f}) {
+                    makeBox(0.45f, 0.5f, 0.45f, matWood, cX + 8 + dx, 0.25f, cZ + dZ + dz, g, true);
+                }
+            }
         }
         
         // Simple stairs

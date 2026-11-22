@@ -32,31 +32,38 @@ public class ReservationManager {
             for (int c = 0; c < 5; c++) {
                 String id = String.format("CLASS_1D_SEAT_%02d", idx++);
                 double x = -6.0 + c * 3.0;
-                double z = -66.0 + r * 1.5;
+                double z = -66.0 + r * 1.5 + 0.7; // seated on the rendered chair, not the desk top
                 spots.put(id, new Spot(id, "class1d", "desk_seat", x, z, Math.PI));
             }
         }
-        spots.put("CLASS_1D_TEACHER", new Spot("CLASS_1D_TEACHER", "class1d", "teacher_podium", 0.0, -67.5, 0.0));
+        spots.put("CLASS_1D_TEACHER", new Spot("CLASS_1D_TEACHER", "class1d", "teacher_podium", -8.0, -66.0, 0.0));
 
-        // Cafeteria Tables
-        int cafIdx = 1;
-        for (int t = 1; t <= 6; t++) {
-            double tx = 56.0 + ((t - 1) % 3) * 5.0;
-            double tz = -26.0 + ((t - 1) / 3) * 6.0;
-            for (int s = 1; s <= 4; s++) {
-                String id = String.format("CAFETERIA_T%d_S%d", t, s);
-                double sx = tx + (s <= 2 ? -0.8 : 0.8);
-                double sz = tz + (s % 2 == 1 ? -0.6 : 0.6);
-                spots.put(id, new Spot(id, "cafeteria", "dining_seat", sx, sz, s <= 2 ? Math.PI / 2 : -Math.PI / 2));
+        // Cafeteria Tables — same centers as the rendered round tables in CampusBuilder
+        // (x 55/61, z -28/-20/-12), with seats on the four plates around each table.
+        float[][] tableCenters = {
+                {55f, -28f}, {61f, -28f}, {55f, -20f}, {61f, -20f}, {55f, -12f}, {61f, -12f}};
+        float[][] seatOffsets = {{1.18f, 0f}, {-1.18f, 0f}, {0f, 1.18f}, {0f, -1.18f}};
+        double[] seatFacings = {-Math.PI / 2, Math.PI / 2, Math.PI, 0}; // face the table
+        for (int t = 0; t < tableCenters.length; t++) {
+            float tx = tableCenters[t][0], tz = tableCenters[t][1];
+            for (int s = 0; s < 4; s++) {
+                String id = String.format("CAFETERIA_T%d_S%d", t + 1, s + 1);
+                double sx = tx + seatOffsets[s][0];
+                double sz = tz + seatOffsets[s][1];
+                spots.put(id, new Spot(id, "cafeteria", "dining_seat", sx, sz, seatFacings[s]));
             }
         }
 
-        // Library Study Desks
-        for (int d = 1; d <= 12; d++) {
-            String id = String.format("LIBRARY_DESK_%02d", d);
-            double lx = -66.0 + ((d - 1) % 4) * 3.5;
-            double lz = 16.0 + ((d - 1) / 4) * 4.0;
-            spots.put(id, new Spot(id, "library", "library_seat", lx, lz, 0.0));
+        // Library Study Desks — match the rendered desk row at x=-54, z=14/22/30.
+        int libIdx = 1;
+        for (float deskZ : new float[]{14f, 22f, 30f}) {
+            for (float dx : new float[]{-1.2f, 1.2f}) {
+                for (float dz : new float[]{-1.0f, 1.0f}) {
+                    String id = String.format("LIBRARY_DESK_%02d", libIdx++);
+                    spots.put(id, new Spot(id, "library", "library_seat",
+                            -54f + dx, deskZ + dz, dz > 0 ? Math.PI : 0.0));
+                }
+            }
         }
     }
 

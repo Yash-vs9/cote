@@ -28,15 +28,28 @@ public final class SaveSlots {
         return false;
     }
 
-    /** One-time upgrade: bring a legacy single-slot save.dat into slot 1 (original kept for safety). */
+    /** One-time upgrade: bring a legacy single-slot save into slot 1 (original kept for safety). */
     public static void migrateLegacyIfNeeded() {
+        if (exists(1)) return;
         Path legacy = Path.of(GameSave.FILE);
-        if (!Files.isRegularFile(legacy) || exists(1)) return;
-        try {
-            Files.copy(legacy, slotPath(1), StandardCopyOption.REPLACE_EXISTING);
-            Log.info("Migrated legacy save.dat into save slot 1.");
-        } catch (Exception e) {
-            Log.warn("Legacy slot migration failed: " + e.getMessage());
+        if (Files.isRegularFile(legacy)) {
+            try {
+                Files.copy(legacy, slotPath(1), StandardCopyOption.REPLACE_EXISTING);
+                Log.info("Migrated legacy save.dat into save slot 1.");
+                return;
+            } catch (Exception e) {
+                Log.warn("Legacy slot migration failed: " + e.getMessage());
+            }
+        }
+        // Pre-1.0 prototype story-only save: import it into slot 1 with sane player defaults.
+        Path storyLegacy = Path.of(GameSave.LEGACY_FILE);
+        if (Files.isRegularFile(storyLegacy)) {
+            GameSave s = GameSave.migrateLegacyFrom(storyLegacy);
+            if (s != null) {
+                s.px = -34f; s.py = 1.4f; s.pz = 40f;
+                s.storeTo(slotPath(1));
+                Log.info("Migrated legacy story_save.properties into save slot 1.");
+            }
         }
     }
 
@@ -53,8 +66,35 @@ public final class SaveSlots {
         return best;
     }
 
+    /** Slot with the oldest modification time (the one a new game may replace when all are full). */
+    public static int oldest() {
+        return oldestExcluding(0);
+    }
+
+    /** Oldest slot other than {@code exclude} (0 = no exclusion). */
+    public static int oldestExcluding(int exclude) {
+        int best = 0;
+        long bestTime = Long.MAX_VALUE;
+        for (int i = 1; i <= COUNT; i++) {
+            if (i == exclude) continue;
+            try {
+                long m = Files.getLastModifiedTime(slotPath(i)).toMillis();
+                if (m < bestTime) { bestTime = m; best = i; }
+            } catch (Exception ignored) {}
+        }
+        return best > 0 ? best : 1;
+    }
+
+    /** First empty slot, or 0 when every slot already holds a save. */
+    public static int firstEmpty() {
+        for (int i = 1; i <= COUNT; i++) if (!exists(i)) return i;
+        return 0;
+    }
+
     /** Load a slot: the save, null for an empty/unreadable slot (corrupt files stay on disk). */
     public static GameSave load(int slot) {
+        // Never let an empty slot import the legacy story file: only migrate once, into slot 1.
+        if (!exists(slot)) return null;
         return GameSave.loadFrom(slotPath(slot));
     }
 

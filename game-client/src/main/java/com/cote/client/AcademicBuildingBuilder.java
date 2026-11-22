@@ -164,15 +164,18 @@ public class AcademicBuildingBuilder {
                             y + 0.13f + s * 0.25f, (BZ - 2) - s * 0.5f, g, true);
                 }
 
-                // ---------- Class 1-D on the 2nd floor (k==1), north-center room ----------
-                if (k == 1) {
+                // ---------- Class 1-D on the ground floor (k==0), north-center room ----------
+                if (k == 0) {
                     float cx = 0, cz = BZ - 7; // north-center classroom
                     makeBox(6, 1.2f, 0.1f, blackboard, cx, y + 1.6f, cz - 4.5f, g, false); // board
-                    makeBox(2, 1.0f, 1.2f, wood, cx, y + 0.5f, cz - 3f, g, true);          // podium
-                    for (int dx = -3; dx <= 3; dx += 3) {
-                        for (int dz = -2; dz <= 4; dz += 2) {
-                            makeBox(1.2f, 0.8f, 1.0f, wood, cx + dx, y + 0.4f, cz + dz, g, true);  // desk
-                            makeBox(0.5f, 0.5f, 0.5f, steel, cx + dx, y + 0.25f, cz + dz + 0.8f, g, true); // chair
+                    makeBox(2, 1.0f, 1.2f, wood, cx - 8f, y + 0.5f, cz - 3f, g, true);      // podium, clear of the desk grid
+                    // 5x5 desk grid matching ReservationManager (CLASS_1D_SEAT_01..25).
+                    for (int c = 0; c < 5; c++) {
+                        for (int r = 0; r < 5; r++) {
+                            float dx = -6f + c * 3f;
+                            float dz = -66f + r * 1.5f;
+                            makeBox(1.2f, 0.8f, 1.0f, wood, cx + dx, y + 0.4f, dz, g, true);  // desk
+                            makeBox(0.5f, 0.5f, 0.5f, steel, cx + dx, y + 0.25f, dz + 0.7f, g, true); // chair
                         }
                     }
                 }

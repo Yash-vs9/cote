@@ -114,7 +114,7 @@ public final class AudioManager {
         musicPhase = Math.floorMod(phase, 4);
         if (!available) return;
         for (int i = 0; i < 4; i++)
-            musicTarget[i] = (i == musicPhase) ? settings.music() : 0f;
+            musicTarget[i] = (i == musicPhase) ? settings.music() * settings.master() : 0f;
     }
 
     /** Ambient rain loudness 0..1 (renderer feeds this from the Weather cycle). */
@@ -135,7 +135,7 @@ public final class AudioManager {
             n.setVolume(Math.max(0f, Math.min(1f, base * settings.master())));
         }
         for (int i = 0; i < 4; i++)
-            musicTarget[i] = (i == musicPhase) ? settings.music() : 0f;
+            musicTarget[i] = (i == musicPhase) ? settings.music() * settings.master() : 0f;
     }
 
     public void play(Sfx sfx) {

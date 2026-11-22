@@ -35,7 +35,8 @@ public class SettingsOverlay extends BaseAppState {
     private java.util.List<Widgets.Slider> sliders = new java.util.ArrayList<>();
     private java.util.List<Widgets.Toggle> toggles = new java.util.ArrayList<>();
     private Widgets.Slider dragging;
-    private float cooldown = 0f;
+    private float saveCooldown = 0f;
+    private boolean settingsDirty = false;
 
     public SettingsOverlay(SimpleApplication app, Settings settings, AudioManager audio, Runnable onChanged) {
         this.app = app;
@@ -89,8 +90,9 @@ public class SettingsOverlay extends BaseAppState {
         sliders.add(Widgets.makeSlider(app, ui, font, "Ambience Volume", settings.ambience(), x, y, rowW,
                 v -> { settings.ambienceVolume = Math.round(v * 100); changed(); }));
         y -= step;
-        sliders.add(Widgets.makeSlider(app, ui, font, "Mouse Sensitivity", (settings.sensitivityMul() - 0.2f) / 1.8f, x, y, rowW,
-                v -> { settings.sensitivity = Math.round((v * 1.8f + 0.2f) * 100); changed(); }));
+        sliders.add(Widgets.makeSlider(app, ui, font, "Mouse Sensitivity",
+                Math.max(0f, Math.min(1f, settings.sensitivity / 100f)), x, y, rowW,
+                v -> { settings.sensitivity = Math.round(v * 100f); changed(); }));
         y -= step;
         // FOV applies live so players can feel the change immediately.
         sliders.add(Widgets.makeSlider(app, ui, font, "Field of View", (clampFov(settings.fov) - 45f) / 55f, x, y, rowW,
@@ -126,15 +128,25 @@ public class SettingsOverlay extends BaseAppState {
     }
 
     private void changed() {
-        settings.save();
+        // Apply live, but coalesce disk writes: dragging a slider fires this per mouse move.
         audio.applyVolumes();
+        app.getFlyByCamera().setRotationSpeed(settings.sensitivityMul());
         if (onChanged != null) onChanged.run();
+        settingsDirty = true;
+        saveCooldown = 0.35f;
+    }
+
+    private void flushSettings() {
+        if (!settingsDirty) return;
+        settings.save();
+        settingsDirty = false;
     }
 
     private static float clampFov(int fov) { return Math.max(45f, Math.min(100f, fov)); }
 
     private void close() {
         audio.play(AudioManager.Sfx.BACK);
+        flushSettings();
         setEnabled(false);
         cleanupUi();
         app.getStateManager().detach(this);
@@ -175,29 +187,43 @@ public class SettingsOverlay extends BaseAppState {
                 if (backBtn != null && Widgets.hits(backBtn, mx, my)) close();
             } else if (!evt.isPressed() && dragging != null) {
                 dragging = null;
+                flushSettings(); // persist once when the drag ends, not on every mouse move
             }
         }
 
         public void onKeyEvent(KeyInputEvent evt) {
             if (!evt.isPressed()) return;
-            if (evt.getKeyCode() == com.jme3.input.KeyInput.KEY_ESCAPE) close();
+            if (evt.getKeyCode() == com.jme3.input.KeyInput.KEY_ESCAPE) {
+                evt.setConsumed(); // prevent Main / the pause menu from also reacting to ESC
+                close();
+            }
         }
     };
 
     @Override
     public void update(float tpf) {
-        cooldown -= tpf;
+        if (saveCooldown > 0f) {
+            saveCooldown -= tpf;
+            if (saveCooldown <= 0f) flushSettings();
+        }
     }
 
     private void cleanupUi() {
         try { app.getInputManager().removeRawInputListener(input); } catch (Exception ignored) {}
         ui.removeFromParent();
+        ui.detachAllChildren(); // a later re-open rebuilds the panel from scratch
+        sliders.clear();
+        toggles.clear();
+        dragging = null;
+        backBtn = null;
     }
 
     @Override
     protected void cleanup(Application application) {
         Log.debug("Settings closed.");
-        if (!isEnabled()) return;
+        // Always release the UI/raw listener, even on a forced detach.
+        flushSettings();
+        cleanupUi();
     }
 
     @Override protected void onEnable() {}

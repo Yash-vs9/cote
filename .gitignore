@@ -16,6 +16,7 @@ target/
 
 # Player-created runtime data
 affinity.properties
+settings.properties
 save*.dat
 screenshots/
 

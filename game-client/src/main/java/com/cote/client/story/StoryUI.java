@@ -74,10 +74,20 @@ public class StoryUI {
 
     private String[] choiceOptions = null;
     private String choicePrompt = "";
+    private boolean reducedMotion = false;
 
     public StoryUI(SimpleApplication app, Delegate delegate) {
         this.app = app;
         this.delegate = delegate;
+    }
+
+    /** Reduced Motion skips the sliding letterbox animation. */
+    public void setReducedMotion(boolean reducedMotion) {
+        this.reducedMotion = reducedMotion;
+        if (reducedMotion && letterAmt != letterTarget) {
+            letterAmt = letterTarget;
+            layoutLetterbox();
+        }
     }
 
     public void init() {
@@ -413,9 +423,13 @@ public class StoryUI {
 
         // Letterbox slide.
         if (letterAmt != letterTarget) {
-            float dir = letterTarget > letterAmt ? 1f : -1f;
-            letterAmt += dir * tpf / 0.28f;
-            letterAmt = Math.max(0f, Math.min(1f, letterAmt));
+            if (reducedMotion) {
+                letterAmt = letterTarget;
+            } else {
+                float dir = letterTarget > letterAmt ? 1f : -1f;
+                letterAmt += dir * tpf / 0.28f;
+                letterAmt = Math.max(0f, Math.min(1f, letterAmt));
+            }
             layoutLetterbox();
         }
 
@@ -473,14 +487,26 @@ public class StoryUI {
         public void onTouchEvent(TouchEvent evt) {}
         public void onKeyEvent(KeyInputEvent evt) {
             if (!evt.isPressed()) return;
+            // Only claim keys while a story surface is actually on screen; otherwise
+            // the global E/1-4 bindings must keep working in free roam.
+            if (!ownsKeys()) return;
             int code = evt.getKeyCode();
             boolean advance = code == com.jme3.input.KeyInput.KEY_E
                     || code == com.jme3.input.KeyInput.KEY_RETURN
                     || code == com.jme3.input.KeyInput.KEY_SPACE
                     || code == com.jme3.input.KeyInput.KEY_ESCAPE;
+            boolean choice = code >= com.jme3.input.KeyInput.KEY_1 && code <= com.jme3.input.KeyInput.KEY_4;
+            if (!advance && !choice) return;
+            // Consume before acting so Main's mapped ESC never opens the pause menu
+            // on the same key press (raw listeners run before mapped actions).
+            evt.setConsumed();
             if (advance) delegate.onAdvanceKey();
-            else if (code >= com.jme3.input.KeyInput.KEY_1 && code <= com.jme3.input.KeyInput.KEY_4)
-                delegate.onChoicePicked(code - com.jme3.input.KeyInput.KEY_1);
+            else delegate.onChoicePicked(code - com.jme3.input.KeyInput.KEY_1);
         }
     };
+
+    /** True while the story owns the screen and should swallow gameplay keys. */
+    private boolean ownsKeys() {
+        return isPageOpen() || isChoiceOpen() || isQuizOpen() || isTitleVisible();
+    }
 }

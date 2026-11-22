@@ -20,7 +20,7 @@ CHAPTER 2|Welcome to the School Life of Your Dreams
 OBJ Head to the bus stop by the Main Gate.
 CMD horikita|gate
 CMD kushida|gate
-GOTO gate|14
+GOTO gate|5
 NARR The bus arrived... and drove straight past the stop without opening its doors. Only students are permitted to board, and apparently we were late in their eyes.
 NPC horikita|So the buses only run when they please. How troublesome. I suppose we walk.
 ME Do you always say exactly what you think?

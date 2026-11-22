@@ -76,7 +76,7 @@ Release builds keep only warnings+ in `logs/game.log` and hide cheats.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
-# → dist/ANHS-Java-Edition-v1.0.0.zip
+# → dist/ANHS-Java-Edition-v1.1.0.zip
 ```
 
 The script builds, copies runtime jars (including LWJGL natives), writes launchers for

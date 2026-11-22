@@ -96,6 +96,7 @@ public class Main extends SimpleApplication {
     private static final ColorRGBA CROSS_HOT = new ColorRGBA(1f, 0.80f, 0.35f, 1f);
 
     private com.cote.client.ui.Compass compass;
+    private boolean mouseLookEnabled = false;
 
     public static final java.util.List<InteractiveDoor> doors = new java.util.ArrayList<>();
     public static final java.util.List<InteractiveElevator> elevators = new java.util.ArrayList<>();
@@ -352,8 +353,8 @@ public class Main extends SimpleApplication {
         points = s.points;
         lastDay = s.day;
         engine.setDay(s.day);
-        engine.setClockMin(s.clockMin);
-        if ("story".equals(s.mode)) startStory(s);
+        engine.restoreClock(s.clockMin);
+        if ("story".equals(s.mode)) { seedStoryProgress(s); startStory(s); }
         else startFreeRoam(new Vector3f(s.px, s.py, s.pz), s.yawDeg);
     }
 
@@ -375,21 +376,42 @@ public class Main extends SimpleApplication {
                     points = s.points;
                     lastDay = s.day;
                     engine.setDay(s.day);
-                    engine.setClockMin(s.clockMin);
-                    if ("story".equals(s.mode)) startStory(s);
+                    engine.restoreClock(s.clockMin);
+                    if ("story".equals(s.mode)) { seedStoryProgress(s); startStory(s); }
                     else startFreeRoam(new Vector3f(s.px, s.py, s.pz), s.yawDeg);
                 }
                 break;
             }
             case FREE_ROAM:
+                selectNewGameSlot();
                 grantStarterAllowance();
                 startFreeRoam(SPAWN, 0f);
                 break;
             case PLAY_STORY:
+                selectNewGameSlot();
                 grantStarterAllowance();
                 startStory(null);
                 break;
         }
+    }
+
+    /**
+     * A new game must never silently overwrite the slot the player just loaded.
+     * Prefer an empty slot; when all three are full, recycle the oldest save.
+     */
+    private void selectNewGameSlot() {
+        int previous = currentSlot;
+        int empty = com.cote.client.systems.SaveSlots.firstEmpty();
+        currentSlot = empty > 0 ? empty : com.cote.client.systems.SaveSlots.oldestExcluding(previous);
+    }
+
+    /** Seed Main's story bookkeeping from a loaded save before the StoryManager starts. */
+    private void seedStoryProgress(com.cote.client.systems.GameSave s) {
+        lastChapterIdx = Math.max(0, s.chapterIdx);
+        lastStepIdx = Math.max(0, s.stepIdx);
+        lastFlags.clear();
+        lastFlags.addAll(s.flags);
+        lastModeWasStory = true;
     }
 
     /** A fresh game opens with the standard 100,000-point monthly allowance (COTE canon). */
@@ -402,6 +424,7 @@ public class Main extends SimpleApplication {
 
     private void startFreeRoam(Vector3f at, float yawDeg) {
         lastModeWasStory = false;
+        resetSitting();
         cam.setLocation(at);
         setYaw(yawDeg);
         hud.flash("Free roam - explore the campus.");
@@ -409,8 +432,15 @@ public class Main extends SimpleApplication {
 
     private void startStory(com.cote.client.systems.GameSave resume) {
         lastModeWasStory = true;
+        if (resume == null) { // fresh run: never inherit a previous run's story bookkeeping
+            lastChapterIdx = 0;
+            lastStepIdx = 0;
+            lastFlags.clear();
+        }
+        resetSitting();
         story = new com.cote.client.story.StoryManager(this, engine, npcController, resume);
         story.setAutosaveHook(() -> saveGameNow(false));
+        story.setReducedMotion(settingsRef.reducedMotion);
         // The midterm pays out: 2,000 private points per correct answer.
         story.setQuizRewardHook(score -> {
             long reward = score * 2000L;
@@ -430,9 +460,11 @@ public class Main extends SimpleApplication {
 
     /** Persists the full game slot: mode, player transform, clock and story progress. */
     private void saveGameNow(boolean userInitiated) {
+        int lastChoice = 0;
         if (story != null && story.isActive()) {
             lastChapterIdx = story.getChapterIdx();
             lastStepIdx = story.getStepIdx();
+            lastChoice = story.getLastChoice();
             lastFlags.clear();
             lastFlags.addAll(story.getFlags());
             lastModeWasStory = true;
@@ -446,7 +478,7 @@ public class Main extends SimpleApplication {
                 com.cote.client.systems.SaveSlots.slotPath(currentSlot));
         s.store(lastModeWasStory ? "story" : "freeroam",
                 cam.getLocation(), (float) Math.toDegrees(angles[1]), engine.getClockMin(),
-                lastChapterIdx, lastStepIdx, lastFlags, engine.getDay(), points);
+                lastChapterIdx, lastStepIdx, lastFlags, engine.getDay(), points, lastChoice);
         if (userInitiated) {
             hud.flash("Game saved. (slot " + currentSlot + ")");
             audio.play(com.cote.client.systems.AudioManager.Sfx.CHIME);
@@ -457,6 +489,7 @@ public class Main extends SimpleApplication {
     private void quitToTitle() {
         saveGameNow(false); // never lose progress on exit-to-title
         if (story != null) {
+            story.shutdown(); // drop story UI + spawned extras before the title screen
             if (stateManager.getState(com.cote.client.story.StoryManager.class) != null) stateManager.detach(story);
             story = null;
         }
@@ -478,7 +511,17 @@ public class Main extends SimpleApplication {
         return (menu != null && menu.isEnabled())
                 || (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()))
                 || (story != null && story.isUiBlocking())
+                || stateManager.getState(com.cote.client.SettingsOverlay.class) != null
                 || stateManager.getState(PauseMenuState.class) != null;
+    }
+
+    /** Pointer-lock look is only active when no modal screen owns input (photo mode keeps it). */
+    private void updateMouseLook() {
+        boolean want = photoMode || !anyUiBlocking();
+        if (want != mouseLookEnabled) {
+            mouseLookEnabled = want;
+            flyCam.setEnabled(want);
+        }
     }
 
     private boolean forward, backward, left, right, sprint;
@@ -512,6 +555,8 @@ public class Main extends SimpleApplication {
         // ESC toggles the pause menu whenever no other screen owns it.
         if (isPressed && "Pause".equals(name)) {
             if (photoMode) { togglePhotoMode(); return; } // ESC leaves photo mode first
+            // Settings owns ESC when open (belt-and-braces with its raw-listener consume).
+            if (stateManager.getState(com.cote.client.SettingsOverlay.class) != null) return;
             boolean pauseOpen = stateManager.getState(PauseMenuState.class) != null;
             if (pauseOpen) togglePause();
             else if (!anyUiBlocking()) togglePause();
@@ -704,6 +749,8 @@ public class Main extends SimpleApplication {
     }
 
     public void simpleUpdate(float tpf) {
+        updateMouseLook();
+        if (story != null && story.isActive()) story.setReducedMotion(settingsRef.reducedMotion);
         // Safety net: never let the player fall out of the world or accumulate NaN state.
         Vector3f p0 = cam.getLocation();
         if (!Float.isFinite(p0.x) || !Float.isFinite(p0.y) || !Float.isFinite(p0.z) || p0.y < -8f) {
@@ -754,9 +801,10 @@ public class Main extends SimpleApplication {
 
         // Movement is locked during dialogue, elevator, pause menu, story screens or while seated.
         boolean pauseOpen = stateManager.getState(PauseMenuState.class) != null;
+        boolean menuBlocking = menu != null && menu.isEnabled();
         boolean storyBlocking = story != null && story.isUiBlocking();
         boolean uiLock = (hud != null && (hud.isDialogueActive() || hud.isElevatorActive()))
-                || storyBlocking || pauseOpen || seated || photoMode;
+                || storyBlocking || pauseOpen || menuBlocking || seated || photoMode;
         if (!uiLock) {
             Vector3f pos = cam.getLocation();
             final float radius = 0.4f, playerHeight = 1.8f, eyeHeight = 1.4f, stepHeight = 0.6f;
@@ -829,23 +877,30 @@ public class Main extends SimpleApplication {
         
         // Tick Engine (schedule/personality brain), then walk NPCs along routes.
         // Resting on a bench fast-forwards the clock 8x — the legit way to pass story WAIT steps.
-        time += tpf;
-        engine.tick(seated ? tpf * 8f : tpf);
+        // Opening the pause menu freezes the entire simulation: clock, weather, schedules and NPCs.
+        if (weather.isEnabled() != settingsRef.weather) weather.setEnabled(settingsRef.weather);
+        if (!pauseOpen) {
+            time += tpf;
+            engine.tick(seated ? tpf * 8f : tpf);
 
-        // Weather cycle: drives the particle rain, its audio level, and the
-        // atmosphere darkening applied inside applyTimeOfDay.
-        rainIntensity = weather.update(tpf);
-        if (rainEmitter != null) {
-            rainEmitter.setParticlesPerSec(rainIntensity * 550f);
-            if (rainIntensity > 0.01f)
-                rainEmitter.setLocalTranslation(cam.getLocation().add(new Vector3f(0, 4f, 0)));
+            // Weather cycle: drives the particle rain, its audio level, and the
+            // atmosphere darkening applied inside applyTimeOfDay.
+            rainIntensity = weather.update(tpf);
+            if (rainEmitter != null) {
+                rainEmitter.setParticlesPerSec(rainIntensity * 550f);
+                if (rainIntensity > 0.01f)
+                    rainEmitter.setLocalTranslation(cam.getLocation().add(new Vector3f(0, 4f, 0)));
+            }
+            if (audio != null) {
+                audio.update(tpf);
+                audio.setRainIntensity(rainIntensity);
+                audio.setMusicPhase(musicPhaseFromClock(engine.getClockMin()));
+            }
+            if (npcController != null) npcController.update(tpf);
+        } else if (audio != null) {
+            if (rainEmitter != null) rainEmitter.setParticlesPerSec(0f); // stop new rain while paused
+            audio.update(tpf); // keep volume fades responsive while paused
         }
-        if (audio != null) {
-            audio.update(tpf);
-            audio.setRainIntensity(rainIntensity);
-            audio.setMusicPhase(musicPhaseFromClock(engine.getClockMin()));
-        }
-        if (npcController != null) npcController.update(tpf);
         
         // Update NPCs and find nearest
         nearestNpc = null;
@@ -853,6 +908,10 @@ public class Main extends SimpleApplication {
         Vector3f playerPos = cam.getLocation();
         
         for (com.cote.simulation.NPC npc : engine.getNpcs()) {
+            float targetX = (float) npc.getX();
+            float targetZ = (float) npc.getZ();
+            float targetY = npcController.getY(npc.getId());
+
             Rig rig = npcRigs.get(npc.getId());
             if (rig == null) {
                 String id = npc.getId();
@@ -860,14 +919,12 @@ public class Main extends SimpleApplication {
                         || id.equals("karuizawa") || id.equals("sakura");
                 String gender = female ? "f" : "m";
                 rig = new Rig(assetManager, gender);
+                rig.setReducedMotion(settingsRef.reducedMotion);
+                // Spawn at the NPC's live position: otherwise every rig slides out of the origin.
+                rig.root.setLocalTranslation(targetX, targetY, targetZ);
                 npcRigs.put(npc.getId(), rig);
                 rootNode.attachChild(rig.root);
             }
-            
-            float targetX = (float) npc.getX();
-            float targetZ = (float) npc.getZ();
-            
-            float targetY = npcController.getY(npc.getId());
             Vector3f currentPos = rig.root.getLocalTranslation();
 
             // Motion is derived from actual per-frame displacement of the server state.
@@ -914,8 +971,8 @@ public class Main extends SimpleApplication {
             if (facingDelta < -Math.PI) facingDelta += (float) (Math.PI * 2);
             prevFacing.put(npc.getId(), targetYaw);
 
+            rig.setReducedMotion(settingsRef.reducedMotion);
             rig.animate(time, tpf, blend, speed, facingDelta);
-            
             float dst = currentPos.distance(playerPos);
             if (dst < minDst) {
                 minDst = dst;
@@ -942,7 +999,7 @@ public class Main extends SimpleApplication {
         applyTimeOfDay((float) engine.getClockMin());
 
         for (InteractiveDoor d : doors) d.update(tpf);
-        for (InteractiveElevator e : elevators) e.update(tpf, this);
+        if (!pauseOpen) for (InteractiveElevator e : elevators) e.update(tpf, this);
         
         if (hud != null && !hud.isDialogueActive() && !hud.isElevatorActive()
                 && !(story != null && story.isUiBlocking())) {
@@ -1136,12 +1193,21 @@ public class Main extends SimpleApplication {
         }
     }
 
-    /** The NPC assigned to the dorm room behind a "Door_Dorm_<floor>" door, or null for other doors. */
+    /** The NPC assigned to the dorm room behind a "Door_Dorm_<floor>_<room>" door. */
     private com.cote.simulation.NPC dormResidentFor(String doorLabel) {
         if (npcController == null || doorLabel == null || !doorLabel.startsWith("Door_Dorm_")) return null;
         try {
-            int floor = Integer.parseInt(doorLabel.substring("Door_Dorm_".length()));
-            String id = npcController.npcOnDormFloor(floor);
+            String rest = doorLabel.substring("Door_Dorm_".length());
+            int split = rest.lastIndexOf('_');
+            int floor, room;
+            if (split >= 0) {
+                floor = Integer.parseInt(rest.substring(0, split));
+                room = Integer.parseInt(rest.substring(split + 1));
+            } else {
+                floor = Integer.parseInt(rest);
+                room = 0;
+            }
+            String id = npcController.npcOnDormFloor(floor, room);
             return id == null ? null : findNpcById(id);
         } catch (NumberFormatException e) {
             return null;
@@ -1183,6 +1249,12 @@ public class Main extends SimpleApplication {
         audio.play(com.cote.client.systems.AudioManager.Sfx.PAGE);
     }
 
+    /** Clear bench state so it never leaks into a different session/save slot. */
+    private void resetSitting() {
+        seated = false;
+        preSitPos = null;
+    }
+
     // ---------------------------------------------------------------- vending machine
 
     private void buyDrink() {
@@ -1198,7 +1270,8 @@ public class Main extends SimpleApplication {
     }
 
     /** Human-readable description of where the player is, for NPC dialogue context. */
-    private String describeLocation(Vector3f p) {        float x = p.x, z = p.z;
+    private String describeLocation(Vector3f p) {
+        float x = p.x, z = p.z;
         if (x > -48 && x < -20 && z > 44 && z < 72) return dormFloor(p) ;
         if (x > -31 && x < 31 && z > -70 && z < -42) {
             int fl = Math.max(0, Math.round((p.y - 1.4f) / 4.25f));
@@ -1206,8 +1279,10 @@ public class Main extends SimpleApplication {
         }
         if (x > 49 && x < 75 && z > -33 && z < -7) return "the School Cafeteria";
         if (x > 49 && x < 75 && z > 15 && z < 45) return "the Gymnasium";
+        if (x > 75 && x < 126 && z > -16 && z < 66) return "the outdoor Sports Complex";
         if (x > -75 && x < -49 && z > 9 && z < 35) return "the Memorial Library";
         if (x > -83 && x < -41 && z > 79 && z < 105) return "the Aquatic Center";
+        if (z < -128) return "the Seaside Boulevard";
         if (x > 17 && x < 71 && z > 63 && z < 93) return "Keyaki Mall";
         if (z > 85) return "the Main Gate";
         return "the central campus plaza";

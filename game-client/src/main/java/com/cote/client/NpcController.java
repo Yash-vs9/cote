@@ -6,6 +6,7 @@ import com.cote.simulation.ReservationManager;
 import com.cote.simulation.RouteManager;
 import com.cote.simulation.SimulationEngine;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -26,6 +27,9 @@ public class NpcController {
     // Dorm lift sits at the dorm building centre; rooms are on the upper floors.
     private static final double DORM_X = -34, DORM_Z = 58;
     private static final double DORM_FH = 3.2;      // dorm floor height
+    private static final double DORM_DOOR_Z = 55;   // north corridor wall (room doors)
+    private static final double[] DORM_ROOM_XS = { -42, -34, -26 };
+    private static final double ACADEMIC_COUNCIL_Y = 12.75; // council room, 4th floor (3 x 4.25m)
     private static final double LIFT_SPEED = 4.0;   // m/s vertical
 
     // --- Smooth ground-travel tuning ---------------------------------------
@@ -59,7 +63,13 @@ public class NpcController {
         String override;      // node key to route to
         String overrideName;  // place display name for the arrival report
         double stuckTimer;    // time spent unable to advance (wall-blocked)
+        double homeX, homeZ;  // this NPC's own dorm room (stable across destination changes)
         ReservationManager.Spot spot; // reserved seat to settle into after graph arrival
+        // Vertical journey: the lift shaft and the waypoint path on the upper floor.
+        double liftX, liftZ;
+        String liftNode;
+        List<double[]> roomPath;
+        int pathIdx;
     }
 
     private final Map<String, Nav> navs = new HashMap<>();
@@ -72,15 +82,17 @@ public class NpcController {
         this.routes = engine.getRouteManager();
         this.reservations = engine.getReservationManager();
         // Assign each student a dorm room on floors 2..N (x cycles across 3 rooms).
-        double[] roomXs = { -42, -34, -26 };
         int floor = 2;
         for (NPC npc : engine.getNpcs()) {
             Nav nav = new Nav();
             nav.currentNode = npc.getSpawnLoc();
             navs.put(npc.getId(), nav);
             if (!"teacher".equals(npc.getRole())) {
-                double rx = roomXs[(floor) % roomXs.length];
-                dormRoom.put(npc.getId(), new double[]{ rx, 50.0, floor * DORM_FH });
+                double rx = DORM_ROOM_XS[floor % DORM_ROOM_XS.length];
+                double[] room = { rx, 50.0, floor * DORM_FH };
+                dormRoom.put(npc.getId(), room);
+                nav.homeX = room[0];
+                nav.homeZ = room[1];
                 floor++;
             }
         }
@@ -164,6 +176,14 @@ public class NpcController {
         return null;
     }
 
+    /** Resident of one specific room index (0..2) on a floor; other rooms are empty. */
+    public String npcOnDormFloor(int floor, int roomIdx) {
+        if (roomIdx < 0 || roomIdx >= DORM_ROOM_XS.length) return null;
+        // Rooms are assigned by floor, cycling through the three x positions.
+        if (roomIdx != Math.floorMod(floor, DORM_ROOM_XS.length)) return null;
+        return npcOnDormFloor(floor);
+    }
+
     public void update(float tpf) {
         for (NPC npc : engine.getNpcs()) {
             Nav nav = navs.get(npc.getId());
@@ -173,13 +193,14 @@ public class NpcController {
             String desired = (nav.override != null) ? nav.override : destinationFor(npc);
             if (desired == null) continue;
 
-            if (!desired.equals(nav.destKey)) {
+            if (!desired.equals(nav.destKey) && nav.phase != ASCEND && nav.phase != DESCEND) {
                 nav.destKey = desired;
                 resolveTarget(npc, nav, desired);
                 // Commands respond immediately; scheduled moves keep their staggered delay.
                 nav.delayRemaining = (nav.override != null) ? 0.0 : Math.max(0.0, npc.getDepartureDelay());
                 if (nav.y > 0.5) {
                     nav.phase = DESCEND_WALK;
+                    nav.pathIdx = nav.roomPath != null ? nav.roomPath.size() - 1 : -1;
                 } else {
                     beginGroundRoute(npc, nav);
                 }
@@ -242,6 +263,25 @@ public class NpcController {
             nav.destIsDorm = true;
             nav.approachNode = "dorm";
             nav.roomX = r[0]; nav.roomZ = r[1]; nav.roomY = r[2];
+            nav.liftX = DORM_X; nav.liftZ = DORM_Z; nav.liftNode = "dorm";
+            nav.roomPath = new ArrayList<>();
+            nav.roomPath.add(new double[]{ r[0], DORM_DOOR_Z });
+            nav.roomPath.add(new double[]{ r[0], r[1] });
+            nav.pathIdx = 0;
+            nav.spot = null;
+        } else if ("councilA".equals(desired)) {
+            // The council room is on the top floor: ride the academic lift, then walk
+            // around the room's south side to its west door instead of clipping walls.
+            nav.destIsDorm = false;
+            nav.approachNode = "councilA";
+            nav.roomX = 24; nav.roomZ = -56; nav.roomY = ACADEMIC_COUNCIL_Y;
+            nav.liftX = 24; nav.liftZ = -49; nav.liftNode = "councilA";
+            nav.roomPath = new ArrayList<>();
+            nav.roomPath.add(new double[]{ 19, -49 });
+            nav.roomPath.add(new double[]{ 19, -56 });
+            nav.roomPath.add(new double[]{ 21, -56 });
+            nav.roomPath.add(new double[]{ 24, -56 });
+            nav.pathIdx = 0;
             nav.spot = null;
         } else {
             nav.destIsDorm = false;
@@ -250,6 +290,7 @@ public class NpcController {
             nav.roomX = c != null ? c[0] : npc.getX();
             nav.roomZ = c != null ? c[1] : npc.getZ();
             nav.roomY = 0;
+            if (nav.y <= 0.5) { nav.roomPath = null; nav.liftNode = null; }
             // Seat-level arrival: settle onto the exact reserved spot (desk/cafeteria/library seat).
             // Guarded by building match so a stale targetSpotId never drags the NPC across campus.
             String spotLoc = spotLocFor(nav.approachNode);
@@ -353,6 +394,7 @@ public class NpcController {
 
     /** Graph route done: head for the reserved seat's exact micro-position, else arrive. */
     private void arriveAfterRoute(Nav nav) {
+        if (nav.roomPath != null) { nav.phase = ASCEND; return; } // dorm room or council room
         if (!nav.destIsDorm && nav.spot != null) {
             nav.phase = SEAT;
             return;
@@ -370,29 +412,60 @@ public class NpcController {
     }
 
     private void stepAscend(NPC npc, Nav nav, float tpf) {
-        npc.setX(DORM_X); npc.setZ(DORM_Z);
+        double lx = nav.liftNode != null ? nav.liftX : DORM_X;
+        double lz = nav.liftNode != null ? nav.liftZ : DORM_Z;
+        npc.setX(lx); npc.setZ(lz);
         nav.y += LIFT_SPEED * tpf;
-        if (nav.y >= nav.roomY) { nav.y = nav.roomY; nav.phase = ROOM; }
+        if (nav.y >= nav.roomY) { nav.y = nav.roomY; nav.pathIdx = 0; nav.phase = ROOM; }
     }
 
     private void stepRoom(NPC npc, Nav nav, float tpf) {
-        if (moveXZ(npc, nav.roomX, nav.roomZ, tpf)) {
-            if (nav.spot != null) nav.phase = SEAT;
-            else nav.phase = ARRIVED;
+        // Thread the real door gap in the corridor wall instead of cutting through it.
+        if (nav.roomPath != null) {
+            while (nav.pathIdx < nav.roomPath.size()) {
+                double[] wp = nav.roomPath.get(nav.pathIdx);
+                if (!moveXZColliding(npc, nav, wp[0], wp[1], tpf, true)) return;
+                nav.pathIdx++;
+            }
+            nav.phase = nav.spot != null ? SEAT : ARRIVED;
+            return;
+        }
+        if (Math.abs(npc.getZ() - DORM_DOOR_Z) > 0.6) {
+            moveXZColliding(npc, nav, nav.roomX, DORM_DOOR_Z, tpf, false);
+            return;
+        }
+        if (moveXZColliding(npc, nav, nav.roomX, nav.roomZ, tpf, true)) {
+            nav.phase = nav.spot != null ? SEAT : ARRIVED;
         }
     }
 
     private void stepDescendWalk(NPC npc, Nav nav, float tpf) {
-        // Walk (on the current floor) back to the lift shaft, then descend.
-        if (moveXZ(npc, DORM_X, DORM_Z, tpf)) nav.phase = DESCEND;
+        // Walk back out through the room's door, then along the corridor to the lift shaft.
+        if (nav.roomPath != null) {
+            if (nav.pathIdx >= 0) {
+                double[] wp = nav.roomPath.get(nav.pathIdx);
+                if (moveXZColliding(npc, nav, wp[0], wp[1], tpf, false)) nav.pathIdx--;
+                return;
+            }
+            if (moveXZColliding(npc, nav, nav.liftX, nav.liftZ, tpf, false)) nav.phase = DESCEND;
+            return;
+        }
+        if (Math.abs(npc.getZ() - DORM_DOOR_Z) > 0.6) {
+            moveXZColliding(npc, nav, nav.homeX, DORM_DOOR_Z, tpf, false);
+            return;
+        }
+        if (moveXZColliding(npc, nav, DORM_X, DORM_Z, tpf, false)) nav.phase = DESCEND;
     }
 
     private void stepDescend(NPC npc, Nav nav, float tpf) {
-        npc.setX(DORM_X); npc.setZ(DORM_Z);
+        double lx = nav.liftNode != null ? nav.liftX : DORM_X;
+        double lz = nav.liftNode != null ? nav.liftZ : DORM_Z;
+        npc.setX(lx); npc.setZ(lz);
         nav.y -= LIFT_SPEED * tpf;
         if (nav.y <= 0) {
             nav.y = 0;
-            nav.currentNode = "dorm";
+            nav.currentNode = nav.liftNode != null ? nav.liftNode : "dorm";
+            nav.roomPath = null; nav.pathIdx = -1; nav.liftNode = null;
             beginGroundRoute(npc, nav);
         }
     }

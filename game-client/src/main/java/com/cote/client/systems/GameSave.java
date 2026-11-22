@@ -33,6 +33,8 @@ public final class GameSave {
     public double clockMin = 7.75 * 60;
     // Story progression (mirrors StoryManager state)
     public int chapterIdx, stepIdx;
+    /** Index of the branch option picked at the last CHOICE (persists RESPONSE pages). */
+    public int lastChoice = 0;
     public List<String> flags = new ArrayList<>();
     // v2: life-sim state
     public int day = 1;
@@ -82,6 +84,7 @@ public final class GameSave {
             s.clockMin = doubleOf(p.getProperty("clockMin"), 7.75 * 60);
             s.chapterIdx = intOf(p.getProperty("chapterIdx"), 0);
             s.stepIdx = intOf(p.getProperty("stepIdx"), 0);
+            s.lastChoice = Math.max(0, intOf(p.getProperty("lastChoice"), 0));
             String fl = p.getProperty("flags", "");
             if (!fl.isEmpty()) for (String t : fl.split(",")) if (!t.isBlank()) s.flags.add(t.trim());
             s.day = intOf(p.getProperty("day"), 1);                 // v1 files predate these; defaults keep
@@ -97,12 +100,19 @@ public final class GameSave {
 
     public void store(String mode, com.jme3.math.Vector3f pos, float yawDeg, double clockMin,
                       int chapterIdx, int stepIdx, Iterable<String> flags, int day, long points) {
+        store(mode, pos, yawDeg, clockMin, chapterIdx, stepIdx, flags, day, points, 0);
+    }
+
+    public void store(String mode, com.jme3.math.Vector3f pos, float yawDeg, double clockMin,
+                      int chapterIdx, int stepIdx, Iterable<String> flags, int day, long points,
+                      int lastChoice) {
         this.mode = mode;
         this.px = pos.x; this.py = pos.y; this.pz = pos.z;
         this.yawDeg = yawDeg;
         this.clockMin = clockMin;
         this.chapterIdx = chapterIdx;
         this.stepIdx = stepIdx;
+        this.lastChoice = Math.max(0, lastChoice);
         this.flags.clear();
         if (flags != null) for (String f : flags) this.flags.add(f);
         this.day = day;
@@ -123,6 +133,7 @@ public final class GameSave {
         p.setProperty("clockMin", Double.toString(clockMin));
         p.setProperty("chapterIdx", String.valueOf(chapterIdx));
         p.setProperty("stepIdx", String.valueOf(stepIdx));
+        p.setProperty("lastChoice", String.valueOf(lastChoice));
         p.setProperty("flags", String.join(",", flags));
         p.setProperty("day", String.valueOf(day));
         p.setProperty("points", String.valueOf(points));
@@ -130,7 +141,8 @@ public final class GameSave {
             Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
             try (OutputStream out = Files.newOutputStream(tmp)) { p.store(out, "ANHS Java Edition save"); }
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            if (target.toString().equals(FILE)) deleteLegacy();
+            // Any successful write supersedes the legacy story-only file beside it.
+            deleteLegacy(target);
         } catch (IOException e) {
             Log.warn("Failed writing game save: " + e.getMessage());
         }
@@ -164,8 +176,8 @@ public final class GameSave {
         }
     }
 
-    static void deleteLegacy() {
-        try { Files.deleteIfExists(Path.of(LEGACY_FILE)); } catch (IOException ignored) {}
+    static void deleteLegacy(Path target) {
+        try { Files.deleteIfExists(target.resolveSibling(LEGACY_FILE)); } catch (IOException ignored) {}
     }
 
     // ---------------- parsing helpers ----------------

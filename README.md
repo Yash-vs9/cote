@@ -11,7 +11,7 @@ victory party, including a midterm exam you actually take.
 
 **Requirements:** Java 17 or newer ([adoptium.net](https://adoptium.net)), any modern GPU.
 
-1. Download `ANHS-Java-Edition-v1.0.0.zip` and unzip anywhere.
+1. Download `ANHS-Java-Edition-v1.1.0.zip` and unzip anywhere.
 2. Run:
    - **Windows:** double-click `Play-Windows.bat`
    - **Linux/macOS:** `bash play-linux-mac.sh`

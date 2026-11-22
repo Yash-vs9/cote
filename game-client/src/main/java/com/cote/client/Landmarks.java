@@ -30,27 +30,29 @@ public class Landmarks {
     public static final List<Place> PLACES = new ArrayList<>();
     static {
         PLACES.add(new Place("cafeteria", "School Cafeteria", "cafInterior",
-                "get water, drinks, food and meals", 60, -20));
+                "get water, drinks, food and meals", 58, -24));
         PLACES.add(new Place("library", "Memorial Library", "libInterior",
-                "study, read and borrow books", -60, 22));
+                "study, read and borrow books", -54, 18));
         PLACES.add(new Place("gym", "Gymnasium", "gymInterior",
                 "sports, basketball and exercise", 60, 30));
         PLACES.add(new Place("mall", "Keyaki Mall", "mallInterior",
                 "shops, cafe and karaoke", 44, 78));
         PLACES.add(new Place("classroom", "Class 1-D", "classroom",
-                "attend class in the Academic Building", -6, -58));
+                "attend class in the Academic Building", 0, -58.6));
         PLACES.add(new Place("dorm", "Dormitory", "dorm",
                 "the residence hall (bedrooms and floor kitchens)", -34, 58));
         PLACES.add(new Place("gate", "Main Gate", "gateN",
                 "the school entrance / leave campus", 0, 95));
-        PLACES.add(new Place("plaza", "Central Plaza", "courtyard",
-                "the fountain courtyard in the campus centre", 0, 30));
+        PLACES.add(new Place("plaza", "Central Plaza", "fountW",
+                "the fountain courtyard in the campus centre", 0, 8));
         PLACES.add(new Place("track", "Running Track", "sportsField",
                 "run laps around the outdoor soccer pitch", 100, 38));
         PLACES.add(new Place("tenniscourts", "Tennis Courts", "tennisCourt",
                 "play tennis on the four outdoor courts", 98, 8));
-        PLACES.add(new Place("store", "Convenience Store", "storeA",
-                "the campus convenience store for snacks and supplies", 34, 48));
+        PLACES.add(new Place("store", "Convenience Store", "storeInterior",
+                "the campus convenience store for snacks and supplies", 62, 70));
+        PLACES.add(new Place("seaside", "Seaside Boulevard", "seaside",
+                "the waterfront promenade and ocean overlook", 0, -138));
     }
 
     public static Place byKey(String key) {
